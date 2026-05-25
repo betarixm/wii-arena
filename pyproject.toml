@@ -1,7 +1,25 @@
 [project]
 name = "wii-arena"
 version = "0.1.0"
-description = "Add your description here"
+description = ""
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = []
+
+[dependency-groups]
+dev = ["wii-arena-core"]
+
+[tool.uv.workspace]
+members = ["packages/wii-arena-core"]
+
+[tool.uv.sources]
+wii-arena-core = { workspace = true }
+
+[tool.pyright]
+include = ["packages/wii-arena-core", "tests"]
+extraPaths = ["packages/wii-arena-core"]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.14"
+useLibraryCodeForTypes = true
+typeCheckingMode = "strict"

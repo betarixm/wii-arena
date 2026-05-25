@@ -1,0 +1,29 @@
+version = 1
+revision = 3
+requires-python = ">=3.14"
+
+[manifest]
+members = [
+    "wii-arena",
+    "wii-arena-core",
+]
+
+[[package]]
+name = "wii-arena"
+version = "0.1.0"
+source = { virtual = "." }
+
+[package.dev-dependencies]
+dev = [
+    { name = "wii-arena-core" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [{ name = "wii-arena-core", editable = "packages/wii-arena-core" }]
+
+[[package]]
+name = "wii-arena-core"
+version = "0.1.0"
+source = { editable = "packages/wii-arena-core" }
