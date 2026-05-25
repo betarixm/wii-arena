@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from enum import Enum
-from types import TracebackType
 from typing import Iterator, NewType
 
 from wii_arena.core.arena.protocols import Arena
@@ -29,18 +28,6 @@ class Dolphin(ABC):
     @abstractmethod
     def frame_buffer(self) -> DolphinFrameBuffer: ...
 
-    @abstractmethod
-    def __enter__(
-        self,
-    ): ...  # Prologue of the process, e.g. booting up.
-    @abstractmethod
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
-    ): ...  # Epilogue of the process, e.g. closing the process.
-
 
 class DolphinScenario(ABC):
     def __init__(self, dolphin: Dolphin):
@@ -51,22 +38,12 @@ class DolphinScenario(ABC):
         return self._dolphin
 
     @abstractmethod
-    def __enter__(
-        self,
-    ): ...  # Prologue of the game, e.g. navigating menus.
-
-    @abstractmethod
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
-    ): ...  # Epilogue of the game, e.g. returning to the main menu or closing the game.
-
-    @abstractmethod
     def terminated(self) -> Terminated: ...
     @abstractmethod
     def truncated(self) -> Truncated: ...
+
+
+class DolphinScenarioAuthor(Provision[DolphinScenario]): ...
 
 
 class DolphinEnvironment(
@@ -98,6 +75,16 @@ class DolphinEnvironment(
         )
 
 
+class DolphinUniverse(Provision[DolphinEnvironment]):
+    def __init__(self, author: DolphinScenarioAuthor):
+        self._author = author
+
+    @contextmanager
+    def session(self) -> Iterator[DolphinEnvironment]:
+        with self._author.session() as scenario:
+            yield DolphinEnvironment(dolphin_scenario=scenario)
+
+
 class DolphinArena[Action](
     Arena[
         DolphinFrameBuffer,
@@ -112,13 +99,3 @@ class DolphinArena[Action](
         context: None,
     ) -> DolphinFrameBuffer:
         return observation[1]
-
-
-class DolphinUniverse(Provision[DolphinEnvironment]):
-    def __init__(self, author: Provision[DolphinScenario]):
-        self._author = author
-
-    @contextmanager
-    def session(self) -> Iterator[DolphinEnvironment]:
-        with self._author.session() as dolphin_scenario:
-            yield DolphinEnvironment(dolphin_scenario)
