@@ -4,7 +4,7 @@ version = "0.1.0"
 description = ""
 readme = "wii_arena/dolphin/README.md"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = ["wii-arena-dlpack"]
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
@@ -19,3 +19,6 @@ namespaces = true
 
 [tool.setuptools.package-data]
 "*" = ["py.typed"]
+
+[tool.uv.sources]
+wii-arena-dlpack = { workspace = true }
