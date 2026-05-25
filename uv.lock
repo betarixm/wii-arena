@@ -6,6 +6,7 @@ requires-python = ">=3.14"
 members = [
     "wii-arena",
     "wii-arena-core",
+    "wii-arena-dlpack",
     "wii-arena-dolphin",
 ]
 
@@ -17,17 +18,28 @@ source = { virtual = "." }
 [package.dev-dependencies]
 dev = [
     { name = "wii-arena-core" },
+    { name = "wii-arena-dlpack" },
+    { name = "wii-arena-dolphin" },
 ]
 
 [package.metadata]
 
 [package.metadata.requires-dev]
-dev = [{ name = "wii-arena-core", editable = "packages/wii-arena-core" }]
+dev = [
+    { name = "wii-arena-core", editable = "packages/wii-arena-core" },
+    { name = "wii-arena-dlpack", editable = "packages/wii-arena-dlpack" },
+    { name = "wii-arena-dolphin", editable = "packages/wii-arena-dolphin" },
+]
 
 [[package]]
 name = "wii-arena-core"
 version = "0.1.0"
 source = { editable = "packages/wii-arena-core" }
+
+[[package]]
+name = "wii-arena-dlpack"
+version = "0.1.0"
+source = { editable = "packages/wii-arena-dlpack" }
 
 [[package]]
 name = "wii-arena-dolphin"

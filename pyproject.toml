@@ -7,18 +7,32 @@ requires-python = ">=3.14"
 dependencies = []
 
 [dependency-groups]
-dev = ["wii-arena-core"]
+dev = ["wii-arena-core", "wii-arena-dlpack", "wii-arena-dolphin"]
 
 [tool.uv.workspace]
-members = ["packages/wii-arena-core", "packages/wii-arena-dolphin"]
+members = [
+    "packages/wii-arena-core",
+    "packages/wii-arena-dlpack",
+    "packages/wii-arena-dolphin",
+]
 
 [tool.uv.sources]
 wii-arena-core = { workspace = true }
+wii-arena-dlpack = { workspace = true }
 wii-arena-dolphin = { workspace = true }
 
 [tool.pyright]
-include = ["packages/wii-arena-core", "packages/wii-arena-dolphin", "tests"]
-extraPaths = ["packages/wii-arena-core", "packages/wii-arena-dolphin"]
+include = [
+    "packages/wii-arena-core",
+    "packages/wii-arena-dlpack",
+    "packages/wii-arena-dolphin",
+    "tests",
+]
+extraPaths = [
+    "packages/wii-arena-core",
+    "packages/wii-arena-dlpack",
+    "packages/wii-arena-dolphin",
+]
 venvPath = "."
 venv = ".venv"
 pythonVersion = "3.14"
