@@ -30,3 +30,10 @@ class DolphinFrameBuffer(SupportsDlpack, ABC):
 class DolphinEnvironment[Action](
     Environment[tuple[DolphinMemoryView, DolphinFrameBuffer], Action, None], ABC
 ): ...
+
+
+class Dolphin(ABC):
+    @abstractmethod
+    def view_memory(self) -> DolphinMemoryView: ...
+    @abstractmethod
+    def view_frame_buffer(self) -> DolphinFrameBuffer: ...
