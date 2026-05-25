@@ -14,24 +14,28 @@ members = [
     "packages/wii-arena-core",
     "packages/wii-arena-dlpack",
     "packages/wii-arena-dolphin",
+    "packages/wii-arena-dolphin-docker",
 ]
 
 [tool.uv.sources]
 wii-arena-core = { workspace = true }
 wii-arena-dlpack = { workspace = true }
 wii-arena-dolphin = { workspace = true }
+wii-arena-dolphin-docker = { workspace = true }
 
 [tool.pyright]
 include = [
     "packages/wii-arena-core",
     "packages/wii-arena-dlpack",
     "packages/wii-arena-dolphin",
+    "packages/wii-arena-dolphin-docker",
     "tests",
 ]
 extraPaths = [
     "packages/wii-arena-core",
     "packages/wii-arena-dlpack",
     "packages/wii-arena-dolphin",
+    "packages/wii-arena-dolphin-docker",
 ]
 venvPath = "."
 venv = ".venv"
