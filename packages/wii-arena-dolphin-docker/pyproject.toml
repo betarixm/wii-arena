@@ -4,7 +4,10 @@ version = "0.1.0"
 description = ""
 readme = "wii_arena/dolphin_docker/README.md"
 requires-python = ">=3.14"
-dependencies = ["wii-arena-dolphin"]
+dependencies = [
+    "docker>=7.1.0",
+    "wii-arena-dolphin",
+]
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]

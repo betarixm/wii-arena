@@ -7,7 +7,12 @@ requires-python = ">=3.14"
 dependencies = []
 
 [dependency-groups]
-dev = ["wii-arena-core", "wii-arena-dlpack", "wii-arena-dolphin"]
+dev = [
+    "wii-arena-core",
+    "wii-arena-dlpack",
+    "wii-arena-dolphin",
+    "wii-arena-dolphin-docker",
+]
 
 [tool.uv.workspace]
 members = [

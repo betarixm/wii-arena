@@ -25,9 +25,9 @@ class Dolphin(ABC):
     @abstractmethod
     def execute(self, action: DolphinAction) -> None: ...
     @abstractmethod
-    def view_memory(self) -> DolphinMemoryView: ...
+    def memory_view(self) -> DolphinMemoryView: ...
     @abstractmethod
-    def view_frame_buffer(self) -> DolphinFrameBuffer: ...
+    def frame_buffer(self) -> DolphinFrameBuffer: ...
 
     @abstractmethod
     def __enter__(
@@ -77,8 +77,8 @@ class DolphinEnvironment(
 
     def reset(self) -> tuple[tuple[DolphinMemoryView, DolphinFrameBuffer], None]:
         return (
-            self._dolphin_scenario.dolphin.view_memory(),
-            self._dolphin_scenario.dolphin.view_frame_buffer(),
+            self._dolphin_scenario.dolphin.memory_view(),
+            self._dolphin_scenario.dolphin.frame_buffer(),
         ), None
 
     def step(
@@ -89,8 +89,8 @@ class DolphinEnvironment(
         self._dolphin_scenario.dolphin.execute(action)
         return (
             (
-                self._dolphin_scenario.dolphin.view_memory(),
-                self._dolphin_scenario.dolphin.view_frame_buffer(),
+                self._dolphin_scenario.dolphin.memory_view(),
+                self._dolphin_scenario.dolphin.frame_buffer(),
             ),
             Terminated(self._dolphin_scenario.terminated()),
             Truncated(self._dolphin_scenario.truncated()),
