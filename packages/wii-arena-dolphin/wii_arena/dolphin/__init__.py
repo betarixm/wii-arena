@@ -1,11 +1,14 @@
 from abc import ABC, abstractmethod
 from types import CapsuleType
+from typing import NewType
 
 from wii_arena.dlpack import (
     DlpackDevice,
     DlpackVersion,
     SupportsDlpack,
 )
+
+DolphinMemoryView = NewType("DolphinMemoryView", memoryview)
 
 
 class DolphinFrameBuffer(SupportsDlpack, ABC):
