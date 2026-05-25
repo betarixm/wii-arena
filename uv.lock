@@ -9,6 +9,7 @@ members = [
     "wii-arena-dlpack",
     "wii-arena-dolphin",
     "wii-arena-dolphin-docker",
+    "wii-arena-mario-kart",
 ]
 
 [[package]]
@@ -129,6 +130,7 @@ dev = [
     { name = "wii-arena-dlpack" },
     { name = "wii-arena-dolphin" },
     { name = "wii-arena-dolphin-docker" },
+    { name = "wii-arena-mario-kart" },
 ]
 
 [package.metadata]
@@ -139,6 +141,7 @@ dev = [
     { name = "wii-arena-dlpack", editable = "packages/wii-arena-dlpack" },
     { name = "wii-arena-dolphin", editable = "packages/wii-arena-dolphin" },
     { name = "wii-arena-dolphin-docker", editable = "packages/wii-arena-dolphin-docker" },
+    { name = "wii-arena-mario-kart", editable = "packages/wii-arena-mario-kart" },
 ]
 
 [[package]]
@@ -180,3 +183,14 @@ requires-dist = [
     { name = "docker", specifier = ">=7.1.0" },
     { name = "wii-arena-dolphin", editable = "packages/wii-arena-dolphin" },
 ]
+
+[[package]]
+name = "wii-arena-mario-kart"
+version = "0.1.0"
+source = { editable = "packages/wii-arena-mario-kart" }
+dependencies = [
+    { name = "wii-arena-dolphin" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "wii-arena-dolphin", editable = "packages/wii-arena-dolphin" }]

@@ -1,0 +1,24 @@
+[project]
+name = "wii-arena-mario-kart"
+version = "0.1.0"
+description = ""
+readme = "wii_arena/mario_kart/README.md"
+requires-python = ">=3.14"
+dependencies = ["wii-arena-dolphin"]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-dir]
+"" = "."
+
+[tool.setuptools.packages.find]
+include = ["wii_arena.mario_kart*"]
+namespaces = true
+
+[tool.setuptools.package-data]
+"*" = ["py.typed"]
+
+[tool.uv.sources]
+wii-arena-dolphin = { workspace = true }

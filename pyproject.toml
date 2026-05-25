@@ -12,6 +12,7 @@ dev = [
     "wii-arena-dlpack",
     "wii-arena-dolphin",
     "wii-arena-dolphin-docker",
+    "wii-arena-mario-kart",
 ]
 
 [tool.uv.workspace]
@@ -20,6 +21,7 @@ members = [
     "packages/wii-arena-dlpack",
     "packages/wii-arena-dolphin",
     "packages/wii-arena-dolphin-docker",
+    "packages/wii-arena-mario-kart",
 ]
 
 [tool.uv.sources]
@@ -27,6 +29,7 @@ wii-arena-core = { workspace = true }
 wii-arena-dlpack = { workspace = true }
 wii-arena-dolphin = { workspace = true }
 wii-arena-dolphin-docker = { workspace = true }
+wii-arena-mario-kart = { workspace = true }
 
 [tool.pyright]
 include = [
@@ -34,6 +37,7 @@ include = [
     "packages/wii-arena-dlpack",
     "packages/wii-arena-dolphin",
     "packages/wii-arena-dolphin-docker",
+    "packages/wii-arena-mario-kart",
     "tests",
 ]
 extraPaths = [
@@ -41,6 +45,7 @@ extraPaths = [
     "packages/wii-arena-dlpack",
     "packages/wii-arena-dolphin",
     "packages/wii-arena-dolphin-docker",
+    "packages/wii-arena-mario-kart",
 ]
 venvPath = "."
 venv = ".venv"
