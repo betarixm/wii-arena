@@ -46,8 +46,12 @@ name = "wii-arena-dolphin"
 version = "0.1.0"
 source = { editable = "packages/wii-arena-dolphin" }
 dependencies = [
+    { name = "wii-arena-core" },
     { name = "wii-arena-dlpack" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "wii-arena-dlpack", editable = "packages/wii-arena-dlpack" }]
+requires-dist = [
+    { name = "wii-arena-core", editable = "packages/wii-arena-core" },
+    { name = "wii-arena-dlpack", editable = "packages/wii-arena-dlpack" },
+]
