@@ -1,7 +1,6 @@
-from abc import ABC, abstractmethod
+from abc import ABC
 from contextlib import AbstractContextManager
 
 
 class Provision[T](ABC):
-    @abstractmethod
     def session(self) -> AbstractContextManager[T]: ...
