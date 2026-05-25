@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from types import CapsuleType
 from typing import NewType
 
+from wii_arena.core.environment.protocols import Environment
 from wii_arena.dlpack import (
     DlpackDevice,
     DlpackVersion,
@@ -24,3 +25,8 @@ class DolphinFrameBuffer(SupportsDlpack, ABC):
 
     @abstractmethod
     def __dlpack_device__(self) -> DlpackDevice: ...
+
+
+class DolphinEnvironment[Action](
+    Environment[tuple[DolphinMemoryView, DolphinFrameBuffer], Action, None], ABC
+): ...
