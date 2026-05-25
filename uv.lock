@@ -6,6 +6,7 @@ requires-python = ">=3.14"
 members = [
     "wii-arena",
     "wii-arena-core",
+    "wii-arena-dolphin",
 ]
 
 [[package]]
@@ -27,3 +28,8 @@ dev = [{ name = "wii-arena-core", editable = "packages/wii-arena-core" }]
 name = "wii-arena-core"
 version = "0.1.0"
 source = { editable = "packages/wii-arena-core" }
+
+[[package]]
+name = "wii-arena-dolphin"
+version = "0.1.0"
+source = { editable = "packages/wii-arena-dolphin" }

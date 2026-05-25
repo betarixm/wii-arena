@@ -10,14 +10,15 @@ dependencies = []
 dev = ["wii-arena-core"]
 
 [tool.uv.workspace]
-members = ["packages/wii-arena-core"]
+members = ["packages/wii-arena-core", "packages/wii-arena-dolphin"]
 
 [tool.uv.sources]
 wii-arena-core = { workspace = true }
+wii-arena-dolphin = { workspace = true }
 
 [tool.pyright]
-include = ["packages/wii-arena-core", "tests"]
-extraPaths = ["packages/wii-arena-core"]
+include = ["packages/wii-arena-core", "packages/wii-arena-dolphin", "tests"]
+extraPaths = ["packages/wii-arena-core", "packages/wii-arena-dolphin"]
 venvPath = "."
 venv = ".venv"
 pythonVersion = "3.14"
