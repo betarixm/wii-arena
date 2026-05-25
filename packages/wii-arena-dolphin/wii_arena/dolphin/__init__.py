@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
+from enum import Enum
 from types import TracebackType
 from typing import Iterator, NewType
 
@@ -15,7 +16,14 @@ DolphinMemoryView = NewType("DolphinMemoryView", memoryview)
 class DolphinFrameBuffer(SupportsDlpack): ...
 
 
+class DolphinAction(
+    Enum
+): ...  # TODO: define the actions that can be taken in the Dolphin environment, e.g. button presses, joystick movements, etc.
+
+
 class Dolphin(ABC):
+    @abstractmethod
+    def execute(self, action: DolphinAction) -> None: ...
     @abstractmethod
     def view_memory(self) -> DolphinMemoryView: ...
     @abstractmethod
@@ -61,8 +69,8 @@ class DolphinScenario(ABC):
     def truncated(self) -> Truncated: ...
 
 
-class DolphinEnvironment[Action](
-    Environment[tuple[DolphinMemoryView, DolphinFrameBuffer], Action, None]
+class DolphinEnvironment(
+    Environment[tuple[DolphinMemoryView, DolphinFrameBuffer], DolphinAction, None]
 ):
     def __init__(self, dolphin_scenario: DolphinScenario) -> None:
         self._dolphin_scenario = dolphin_scenario
@@ -74,11 +82,11 @@ class DolphinEnvironment[Action](
         ), None
 
     def step(
-        self, action: Action
+        self, action: DolphinAction
     ) -> tuple[
         tuple[DolphinMemoryView, DolphinFrameBuffer], Terminated, Truncated, None
     ]:
-        self._execute_action(action)
+        self._dolphin_scenario.dolphin.execute(action)
         return (
             (
                 self._dolphin_scenario.dolphin.view_memory(),
@@ -88,10 +96,6 @@ class DolphinEnvironment[Action](
             Truncated(self._dolphin_scenario.truncated()),
             None,
         )
-
-    def _execute_action(self, action: Action) -> None:
-        # TODO: delegate to `Dolphin` to handle these.
-        ...
 
 
 class DolphinArena[Action](
@@ -110,11 +114,11 @@ class DolphinArena[Action](
         return observation[1]
 
 
-class DolphinUniverse[Action](Provision[DolphinEnvironment[Action]]):
+class DolphinUniverse(Provision[DolphinEnvironment]):
     def __init__(self, author: Provision[DolphinScenario]):
         self._author = author
 
     @contextmanager
-    def session(self) -> Iterator[DolphinEnvironment[Action]]:
+    def session(self) -> Iterator[DolphinEnvironment]:
         with self._author.session() as dolphin_scenario:
             yield DolphinEnvironment(dolphin_scenario)
