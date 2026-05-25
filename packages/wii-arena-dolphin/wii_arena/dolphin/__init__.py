@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from types import CapsuleType, TracebackType
 from typing import NewType, Self
 
+from wii_arena.core.arena.protocols import Arena
 from wii_arena.core.environment.protocols import Environment
 from wii_arena.core.environment.types import Terminated, Truncated
 from wii_arena.dlpack import (
@@ -74,3 +75,19 @@ class Dolphin(ABC):
         exc: BaseException | None,
         tb: TracebackType | None,
     ): ...
+
+
+class DolphinArena[Action](
+    Arena[
+        DolphinFrameBuffer,
+        tuple[DolphinMemoryView, DolphinFrameBuffer],
+        Action,
+        None,
+    ]
+):
+    def _event_from_observation(
+        self,
+        observation: tuple[DolphinMemoryView, DolphinFrameBuffer],
+        context: None,
+    ) -> DolphinFrameBuffer:
+        return observation[1]
