@@ -1,6 +1,5 @@
 from contextlib import contextmanager
-from types import TracebackType
-from typing import Iterator, Self
+from typing import Iterator
 
 from wii_arena.core.environment.types import Terminated, Truncated
 from wii_arena.dolphin import (
@@ -11,19 +10,6 @@ from wii_arena.dolphin import (
 
 class MarioKartWiiGrandPrixScenario(DolphinScenario):
     class Session(DolphinScenario.Session):
-        def __enter__(self) -> Self:
-            # TODO: implement this method to navigate the Dolphin emulator to the Grand Prix mode in Mario Kart Wii.
-            ...
-
-        def __exit__(
-            self,
-            exc_type: type[BaseException] | None,
-            exc: BaseException | None,
-            tb: TracebackType | None,
-        ):
-            # TODO: implement this method to clean up after the Grand Prix scenario in Mario Kart Wii.
-            ...
-
         def terminated(self) -> Terminated:
             # TODO: implement this method to determine if the Grand Prix scenario in Mario Kart Wii has terminated, e.g. by checking all the players have finished the race
             ...
