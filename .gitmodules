@@ -1,0 +1,3 @@
+[submodule "containers/dolphin/dolphin"]
+	path = containers/dolphin/dolphin
+	url = https://github.com/2026-poka-science-war-ai/dolphin.git
