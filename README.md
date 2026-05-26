@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🕹️<br>Wii Arena
+# 👾<br>Wii Arena
 
 **Press <kbd>A</kbd> to continue.**
 
