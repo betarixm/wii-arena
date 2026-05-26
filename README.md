@@ -1,4 +1,11 @@
-# Wii Arena
+<div align="center">
+
+# 🕹️<br>Wii Arena
+
+**Press <kbd>A</kbd> to continue.**
+
+Bringing Wii Environments to AI Agents.
+</div>
 
 ```python
 import docker
