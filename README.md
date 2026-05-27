@@ -14,7 +14,7 @@ from wii_arena.dolphin import DolphinEnvironment
 from wii_arena.dolphin_docker import DockerDolphin
 from wii_arena.mario_kart import MarioKartWiiGrandPrixScenario
 
-DOCKER_IMAGE = docker.from_env().images.get("...")
+DOCKER_IMAGE = docker.from_env().images.get("ghcr.io/betarixm/wii-arena-dolphin:latest")
 
 with DolphinEnvironment(
     scenario=MarioKartWiiGrandPrixScenario(
