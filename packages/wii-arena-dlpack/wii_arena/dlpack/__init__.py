@@ -37,6 +37,6 @@ class SupportsDlpack(Protocol):
 
 class Driver(ABC):
     @abstractmethod
-    def dlpack_from_fd(
-        self, fd: int, size: int, height: int, stride: int
+    def dlpack_from_file_descriptor(
+        self, file_descriptor: int, size: int, height: int, stride: int
     ) -> AbstractContextManager[SupportsDlpack]: ...
