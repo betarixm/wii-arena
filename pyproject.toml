@@ -4,11 +4,12 @@ version = "0.1.0"
 description = ""
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = ["pillow>=12.2.0"]
 
 [dependency-groups]
 dev = [
     "wii-arena-core",
+    "wii-arena-cuda-driver",
     "wii-arena-dlpack",
     "wii-arena-dolphin",
     "wii-arena-dolphin-docker",
@@ -18,6 +19,7 @@ dev = [
 [tool.uv.workspace]
 members = [
     "packages/wii-arena-core",
+    "packages/wii-arena-cuda-driver",
     "packages/wii-arena-dlpack",
     "packages/wii-arena-dolphin",
     "packages/wii-arena-dolphin-docker",
@@ -26,14 +28,17 @@ members = [
 
 [tool.uv.sources]
 wii-arena-core = { workspace = true }
+wii-arena-cuda-driver = { workspace = true }
 wii-arena-dlpack = { workspace = true }
 wii-arena-dolphin = { workspace = true }
 wii-arena-dolphin-docker = { workspace = true }
 wii-arena-mario-kart = { workspace = true }
 
+
 [tool.pyright]
 include = [
     "packages/wii-arena-core",
+    "packages/wii-arena-cuda-driver",
     "packages/wii-arena-dlpack",
     "packages/wii-arena-dolphin",
     "packages/wii-arena-dolphin-docker",
@@ -42,6 +47,7 @@ include = [
 ]
 extraPaths = [
     "packages/wii-arena-core",
+    "packages/wii-arena-cuda-driver",
     "packages/wii-arena-dlpack",
     "packages/wii-arena-dolphin",
     "packages/wii-arena-dolphin-docker",
