@@ -1,0 +1,11 @@
+{
+  "file_format_version": "1.0.0",
+  "layer": {
+    "name": "@VULKAN_LAYER_NAME@",
+    "type": "GLOBAL",
+    "library_path": "@VULKAN_LAYER_LIB_PATH@",
+    "api_version": "1.3.0",
+    "implementation_version": "1",
+    "description": "Wii Arena frame capture Vulkan layer"
+  }
+}

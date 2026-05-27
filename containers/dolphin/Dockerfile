@@ -1,6 +1,8 @@
 FROM ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV VK_LAYER_PATH=/usr/local/share/vulkan/explicit_layer.d
+ENV VK_INSTANCE_LAYERS=VK_LAYER_WII_arena_frame_capture
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     locales wget xvfb x11vnc novnc websockify git gcc g++ make python3-dev cmake \
@@ -14,6 +16,8 @@ RUN apt-get update && \
     libxi-dev \
     # EGL
     libegl1-mesa-dev \
+    # Vulkan
+    libvulkan-dev \
     # FFMPEG
     libavcodec-dev \
     libavformat-dev \
@@ -98,6 +102,7 @@ RUN apt-get update && \
 
 RUN --mount=type=bind,source=.,target=/workspace,rw=true \
     --mount=type=cache,target=/build \
+    --mount=type=cache,target=/build-vulkan-layer \
     if [ -d /workspace/dolphin ]; then SRC=/workspace/dolphin; \
     elif [ -d /workspace/containers/dolphin/dolphin ]; then SRC=/workspace/containers/dolphin/dolphin; \
     else echo "dolphin source directory not found in build context"; exit 1; fi && \
@@ -115,4 +120,7 @@ RUN --mount=type=bind,source=.,target=/workspace,rw=true \
     -DUSE_SYSTEM_LIBMGBA=OFF \
     -DCMAKE_POLICY_VERSION_MINIMUM=3.5 && \
     cmake --build /build -j$(nproc) && \
-    cmake --install /build
+    cmake --install /build && \
+    cmake -S /workspace/packages/vulkan-frame-layer -B /build-vulkan-layer && \
+    cmake --build /build-vulkan-layer -j$(nproc) && \
+    cmake --install /build-vulkan-layer
