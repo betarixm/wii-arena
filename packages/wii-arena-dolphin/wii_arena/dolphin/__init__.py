@@ -1,20 +1,29 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import AbstractContextManager, ExitStack, contextmanager
 from enum import Enum
+import logging
 from typing import Iterator, NewType
 
+from pydantic import BaseModel
 from wii_arena.core.arena.protocols import Arena
 from wii_arena.core.environment.protocols import Environment
 from wii_arena.core.environment.types import Terminated, Truncated
 from wii_arena.core.session.protocols import SupportsSession
 from wii_arena.dlpack import SupportsDlpack
 
+_LOGGER = logging.getLogger(__name__)
+
 DolphinMemoryView = NewType("DolphinMemoryView", memoryview)
 
 
 class DolphinFrameBuffer(SupportsDlpack): ...
+
+
+class DolphinAgentAction(
+    BaseModel
+): ...  # TODO: define the structure of an action that can be taken by an agent in the Dolphin environment, e.g. button presses, joystick movements, etc.
 
 
 class DolphinAction(
@@ -29,7 +38,7 @@ class Dolphin(SupportsSession):
         @abstractmethod
         def memory_view(self) -> DolphinMemoryView: ...
         @abstractmethod
-        def frame_buffer(self) -> DolphinFrameBuffer: ...
+        def frame_buffer(self) -> AbstractContextManager[DolphinFrameBuffer]: ...
 
     @abstractmethod
     def session(self) -> AbstractContextManager[Dolphin.Session]: ...
@@ -66,11 +75,22 @@ class DolphinEnvironment(
     ):
         def __init__(self, scenario_session: DolphinScenario.Session) -> None:
             self._dolphin_scenario = scenario_session
+            self.frame_stack = ExitStack()
+            _LOGGER.debug("Created DolphinEnvironment.Session")
+
+        def _refresh_frame_buffer(self) -> DolphinFrameBuffer:
+            _LOGGER.debug("Refreshing frame buffer context")
+            self.frame_stack.close()
+            self.frame_stack = ExitStack()
+            return self.frame_stack.enter_context(
+                self._dolphin_scenario.dolphin.frame_buffer()
+            )
 
         def reset(self) -> tuple[tuple[DolphinMemoryView, DolphinFrameBuffer], None]:
+            _LOGGER.info("Resetting Dolphin environment session")
             return (
                 self._dolphin_scenario.dolphin.memory_view(),
-                self._dolphin_scenario.dolphin.frame_buffer(),
+                self._refresh_frame_buffer(),
             ), None
 
         def step(
@@ -78,11 +98,12 @@ class DolphinEnvironment(
         ) -> tuple[
             tuple[DolphinMemoryView, DolphinFrameBuffer], Terminated, Truncated, None
         ]:
+            _LOGGER.debug("Stepping Dolphin environment with action=%s", action)
             self._dolphin_scenario.dolphin.execute(action)
             return (
                 (
                     self._dolphin_scenario.dolphin.memory_view(),
-                    self._dolphin_scenario.dolphin.frame_buffer(),
+                    self._refresh_frame_buffer(),
                 ),
                 Terminated(self._dolphin_scenario.terminated()),
                 Truncated(self._dolphin_scenario.truncated()),
@@ -91,11 +112,18 @@ class DolphinEnvironment(
 
     def __init__(self, scenario: DolphinScenario):
         self._scenario = scenario
+        _LOGGER.debug("Initialized DolphinEnvironment with scenario=%s", type(scenario).__name__)
 
     @contextmanager
     def session(self) -> Iterator[Session]:
+        _LOGGER.info("Opening DolphinEnvironment session")
         with self._scenario.session() as scenario_session:
-            yield DolphinEnvironment.Session(scenario_session=scenario_session)
+            session = DolphinEnvironment.Session(scenario_session=scenario_session)
+            try:
+                yield session
+            finally:
+                _LOGGER.info("Closing DolphinEnvironment session")
+                session.frame_stack.close()
 
 
 class DolphinArena[Action](
