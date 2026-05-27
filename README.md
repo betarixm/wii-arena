@@ -33,3 +33,31 @@ with DolphinEnvironment(
         action = AGENT.act(observation)
         observation, terminated, truncated, context = environment.step(action=action)
 ```
+
+## Quickstart
+
+```bash
+git clone https://github.com/2026-poka-science-war-ai/environment.git
+cd environment
+uv sync
+```
+
+```bash
+docker pull ghcr.io/betarixm/wii-arena-dolphin:latest
+```
+
+## Environment Behavior
+
+### Execution Model
+
+The environment runs synchronously. It waits for the agent to return an action before advancing to the next step.
+
+### Observation Semantics
+
+The environment returns a memory view, not a memory copy. Therefore, agents must not mutate the observation returned by the environment. The environment does not enforce immutability at the type or runtime level. However, because execution is synchronous, participants may treat observations as immutable within each step.
+
+## Limitations
+
+### CUDA Support
+
+Running the environment with `DockerDolphin` and `ghcr.io/betarixm/wii-arena-dolphin` is supported only on Linux with CUDA.
