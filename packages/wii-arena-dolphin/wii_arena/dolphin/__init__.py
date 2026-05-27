@@ -1,9 +1,8 @@
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager, ExitStack, contextmanager
-from enum import Enum
-import logging
 from typing import Iterator, NewType
 
 from pydantic import BaseModel
@@ -26,9 +25,8 @@ class DolphinAgentAction(
 ): ...  # TODO: define the structure of an action that can be taken by an agent in the Dolphin environment, e.g. button presses, joystick movements, etc.
 
 
-class DolphinAction(
-    Enum
-): ...  # TODO: define the actions that can be taken in the Dolphin environment, e.g. button presses, joystick movements, etc.
+DolphinAgentIndex = NewType("DolphinAgentIndex", int)
+DolphinAction = list[tuple[DolphinAgentIndex, DolphinAgentAction]]
 
 
 class Dolphin(SupportsSession):
@@ -112,7 +110,9 @@ class DolphinEnvironment(
 
     def __init__(self, scenario: DolphinScenario):
         self._scenario = scenario
-        _LOGGER.debug("Initialized DolphinEnvironment with scenario=%s", type(scenario).__name__)
+        _LOGGER.debug(
+            "Initialized DolphinEnvironment with scenario=%s", type(scenario).__name__
+        )
 
     @contextmanager
     def session(self) -> Iterator[Session]:
