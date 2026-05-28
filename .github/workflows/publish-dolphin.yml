@@ -7,7 +7,7 @@ on:
     paths:
       - containers/dolphin/**
       - packages/vulkan-frame-layer/**
-      - .github/workflows/publish-dolphin-image.yml
+      - .github/workflows/publish-dolphin.yml
   workflow_dispatch:
 
 env:
