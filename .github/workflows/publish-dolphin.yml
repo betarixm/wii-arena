@@ -64,24 +64,15 @@ jobs:
           file: containers/dolphin/Dockerfile
           target: full-artifact
           outputs: type=local,dest=./dist/full
-      - run: |
-          tar -czf wii-arena-dolphin-linux-x86_64.tar.gz \
-            -C ./dist/dolphin/wii-arena-dolphin .
-
-          tar -czf wii-arena-vulkan-layer-linux-x86_64.tar.gz \
-            -C ./dist/vulkan-layer/wii-arena-vulkan-layer .
-
-          tar -czf wii-arena-dolphin-full-linux-x86_64.tar.gz \
-            -C ./dist/full .
       - uses: actions/upload-artifact@v4
         with:
           name: wii-arena-dolphin-linux-x86_64
-          path: wii-arena-dolphin-linux-x86_64.tar.gz
+          path: ./dist/dolphin/wii-arena-dolphin/
       - uses: actions/upload-artifact@v4
         with:
           name: wii-arena-vulkan-layer-linux-x86_64
-          path: wii-arena-vulkan-layer-linux-x86_64.tar.gz
+          path: ./dist/vulkan-layer/wii-arena-vulkan-layer/
       - uses: actions/upload-artifact@v4
         with:
           name: wii-arena-dolphin-full-linux-x86_64
-          path: wii-arena-dolphin-full-linux-x86_64.tar.gz
+          path: ./dist/full/
