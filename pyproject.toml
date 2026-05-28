@@ -14,6 +14,7 @@ dev = [
     "wii-arena-dolphin",
     "wii-arena-dolphin-docker",
     "wii-arena-dolphin-docker-nvidia",
+    "wii-arena-dolphin-local",
     "wii-arena-mario-kart",
 ]
 
@@ -25,6 +26,7 @@ members = [
     "packages/wii-arena-dolphin",
     "packages/wii-arena-dolphin-docker",
     "packages/wii-arena-dolphin-docker-nvidia",
+    "packages/wii-arena-dolphin-local",
     "packages/wii-arena-mario-kart",
 ]
 
@@ -35,6 +37,7 @@ wii-arena-dlpack = { workspace = true }
 wii-arena-dolphin = { workspace = true }
 wii-arena-dolphin-docker = { workspace = true }
 wii-arena-dolphin-docker-nvidia = { workspace = true }
+wii-arena-dolphin-local = { workspace = true }
 wii-arena-mario-kart = { workspace = true }
 
 
@@ -46,6 +49,7 @@ include = [
     "packages/wii-arena-dolphin",
     "packages/wii-arena-dolphin-docker",
     "packages/wii-arena-dolphin-docker-nvidia",
+    "packages/wii-arena-dolphin-local",
     "packages/wii-arena-mario-kart",
     "tests",
 ]
@@ -56,6 +60,7 @@ extraPaths = [
     "packages/wii-arena-dolphin",
     "packages/wii-arena-dolphin-docker",
     "packages/wii-arena-dolphin-docker-nvidia",
+    "packages/wii-arena-dolphin-local",
     "packages/wii-arena-mario-kart",
 ]
 venvPath = "."
