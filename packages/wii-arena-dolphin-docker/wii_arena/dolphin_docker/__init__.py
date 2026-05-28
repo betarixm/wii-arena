@@ -8,6 +8,7 @@ import socket
 import struct
 import tempfile
 import time
+from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, cast
@@ -15,7 +16,7 @@ from typing import Iterator, cast
 from docker import DockerClient
 from docker.models.containers import Container
 from docker.models.images import Image
-from wii_arena.cuda_driver import CudaDriver
+from wii_arena.dlpack import Driver
 from wii_arena.dolphin import (
     Dolphin,
     DolphinAction,
@@ -52,17 +53,17 @@ _DOLPHIN_MEMORY_FD_SCAN_SCRIPT = (
 )
 
 
-class DockerDolphin(Dolphin):
+class DockerDolphin(Dolphin, ABC):
     class Session(Dolphin.Session):
         def __init__(
             self,
             memory_view: DolphinMemoryView,
             frame_socket: socket.socket,
-            cuda_driver: CudaDriver,
+            driver: Driver,
         ):
             self._memory_view = memory_view
             self._frame_socket = frame_socket
-            self._cuda_driver = cuda_driver
+            self._driver = driver
 
         def execute(self, action: DolphinAction) -> None:
             _LOGGER.debug("execute called with action=%s (noop)", action)
@@ -96,7 +97,7 @@ class DockerDolphin(Dolphin):
                 raise RuntimeError(f"Frame header too short: {len(msg)}")
 
             _, height, stride, size, _frame_id = struct.unpack("IIIII", msg[:20])
-            with self._cuda_driver.dlpack_from_file_descriptor(
+            with self._driver.dlpack_from_file_descriptor(
                 fd, size, height, stride
             ) as frame:
                 yield cast(DolphinFrameBuffer, frame)
@@ -105,6 +106,7 @@ class DockerDolphin(Dolphin):
         self,
         docker_image: Image,
         wii_iso_file: Path,
+        driver: Driver,
         docker_client: DockerClient | None = None,
         container_socket_directory: str = "/tmp",
     ):
@@ -114,6 +116,11 @@ class DockerDolphin(Dolphin):
         self._docker_image = docker_image
         self._wii_iso_file = wii_iso_file
         self._container_socket_directory = container_socket_directory
+        self._driver = driver
+
+    @property
+    def _container_frame_socket_file(self) -> str:
+        return f"{self._container_socket_directory}/frame_capture.sock"
 
     @contextmanager
     def session(self) -> Iterator[DockerDolphin.Session]:
@@ -121,36 +128,9 @@ class DockerDolphin(Dolphin):
             tempfile.TemporaryDirectory() as socket_directory,
             tempfile.TemporaryDirectory() as dev_shm_directory,
         ):
-            socket_path_in_container = (
-                f"{self._container_socket_directory}/frame_capture.sock"
-            )
-            container = self._docker_client.containers.run(
-                image=self._docker_image,
-                detach=True,
-                remove=False,
-                runtime="nvidia",
-                shm_size="2g",
-                working_dir="/workspace",
-                tty=True,
-                volumes={
-                    str(self._wii_iso_file): {"bind": "/game.iso", "mode": "ro"},
-                    str(socket_directory): {
-                        "bind": self._container_socket_directory,
-                        "mode": "rw",
-                    },
-                    str(dev_shm_directory): {"bind": "/dev/shm", "mode": "rw"},
-                },
-                environment={
-                    "NVIDIA_VISIBLE_DEVICES": "all",
-                    "NVIDIA_DRIVER_CAPABILITIES": "all",
-                    "FRAME_CAPTURE_SOCKET": socket_path_in_container,
-                },
-                command=[
-                    "dolphin-emu-nogui",
-                    "--exec=/game.iso",
-                    "--platform=headless",
-                    "--video_backend=Vulkan",
-                ],
+            container = self._container(
+                socket_directory=Path(socket_directory),
+                dev_shm_directory=Path(dev_shm_directory),
             )
             frame_socket: socket.socket | None = None
             memory_fd_socket_host = Path(socket_directory) / "memory_fd.sock"
@@ -174,7 +154,7 @@ class DockerDolphin(Dolphin):
                 yield DockerDolphin.Session(
                     memory_view=memory_view,
                     frame_socket=frame_socket,
-                    cuda_driver=CudaDriver(),
+                    driver=self._driver,
                 )
             finally:
                 memory_fd_socket_host.unlink(missing_ok=True)
@@ -182,6 +162,13 @@ class DockerDolphin(Dolphin):
                     frame_socket.sendall(b"Q")
                     frame_socket.close()
                 container.remove(force=True)
+
+    @abstractmethod
+    def _container(
+        self,
+        socket_directory: Path,
+        dev_shm_directory: Path,
+    ) -> Container: ...
 
 
 def _resolve_memory_view(

@@ -1,10 +1,10 @@
 [project]
-name = "wii-arena-dolphin-docker"
+name = "wii-arena-dolphin-docker-nvidia"
 version = "0.1.0"
 description = ""
-readme = "wii_arena/dolphin_docker/README.md"
+readme = "wii_arena/dolphin_docker_nvidia/README.md"
 requires-python = ">=3.14"
-dependencies = ["docker>=7.1.0", "wii-arena-dolphin", "wii-arena-dlpack"]
+dependencies = ["wii-arena-dolphin-docker", "wii-arena-cuda-driver"]
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
@@ -14,12 +14,11 @@ build-backend = "setuptools.build_meta"
 "" = "."
 
 [tool.setuptools.packages.find]
-include = ["wii_arena.dolphin_docker*"]
+include = ["wii_arena.dolphin_docker_nvidia*"]
 namespaces = true
 
 [tool.setuptools.package-data]
 "*" = ["py.typed"]
 
 [tool.uv.sources]
-wii-arena-dolphin = { workspace = true }
-wii-arena-dlpack = { workspace = true }
+wii-arena-dolphin-docker = { workspace = true }
