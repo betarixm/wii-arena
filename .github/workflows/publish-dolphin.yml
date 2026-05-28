@@ -1,0 +1,87 @@
+name: Publish Dolphin
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - containers/dolphin/**
+      - packages/vulkan-frame-layer/**
+      - .github/workflows/publish-dolphin-image.yml
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/betarixm/wii-arena-dolphin
+
+jobs:
+  publish:
+    name: Build and push
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: containers/dolphin/Dockerfile
+          target: runtime
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: containers/dolphin/Dockerfile
+          target: dolphin-artifact
+          outputs: type=local,dest=./dist/dolphin
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: containers/dolphin/Dockerfile
+          target: vulkan-layer-artifact
+          outputs: type=local,dest=./dist/vulkan-layer
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: containers/dolphin/Dockerfile
+          target: full-artifact
+          outputs: type=local,dest=./dist/full
+      - run: |
+          tar -czf wii-arena-dolphin-linux-x86_64.tar.gz \
+            -C ./dist/dolphin/wii-arena-dolphin .
+
+          tar -czf wii-arena-vulkan-layer-linux-x86_64.tar.gz \
+            -C ./dist/vulkan-layer/wii-arena-vulkan-layer .
+
+          tar -czf wii-arena-dolphin-full-linux-x86_64.tar.gz \
+            -C ./dist/full .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wii-arena-dolphin-linux-x86_64
+          path: wii-arena-dolphin-linux-x86_64.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wii-arena-vulkan-layer-linux-x86_64
+          path: wii-arena-vulkan-layer-linux-x86_64.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wii-arena-dolphin-full-linux-x86_64
+          path: wii-arena-dolphin-full-linux-x86_64.tar.gz

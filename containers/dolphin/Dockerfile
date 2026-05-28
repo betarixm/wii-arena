@@ -1,117 +1,51 @@
-FROM ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b
+FROM ubuntu:24.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV VK_LAYER_PATH=/usr/local/share/vulkan/explicit_layer.d
+
+ENV DOLPHIN_PREFIX=/opt/wii-arena-dolphin
+ENV VULKAN_LAYER_PREFIX=/opt/wii-arena-vulkan-layer
+
+ENV PATH=${DOLPHIN_PREFIX}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${DOLPHIN_PREFIX}/lib:${VULKAN_LAYER_PREFIX}/lib:${LD_LIBRARY_PATH}
+ENV VK_LAYER_PATH=${VULKAN_LAYER_PREFIX}/share/vulkan/explicit_layer.d
 ENV VK_INSTANCE_LAYERS=VK_LAYER_WII_arena_frame_capture
+
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     locales wget xvfb x11vnc novnc websockify git gcc g++ make python3-dev cmake \
-    # PkgConfig
-    pkg-config \
-    # OpenGL
-    libgl1-mesa-dev \
-    # X11
-    libx11-dev \
-    libxrandr-dev \
-    libxi-dev \
-    # EGL
-    libegl1-mesa-dev \
-    # Vulkan
-    libvulkan-dev \
-    # FFMPEG
-    libavcodec-dev \
-    libavformat-dev \
-    libavutil-dev \
-    libswresample-dev \
-    libswscale-dev \
-    # udev (Use libeudev-dev if on non-systemd)
-    libudev-dev \
-    # evdev
-    libevdev-dev \
-    # SDL
-    # libsdl3-dev \
-    # FMT
-    # libfmt-dev \
-    # glslang
-    glslang-dev \
-    glslang-tools \
-    # pugixml
-    libpugixml-dev \
-    # enet
-    # libenet-dev \
-    # xxhash
-    libxxhash-dev \
-    # bzip2
-    libbz2-dev \
-    # LZMA
-    liblzma-dev \
-    # zstd
-    libzstd-dev \
-    # zlib
-    # zlib1g-dev \
-    # minizip-ng
-    ## Not packaged yet (but soon on Debian)
-    # lzo
-    liblzo2-dev \
-    # lz4
-    liblz4-dev \
-    # spng
-    libspng-dev \
-    # cubeb
-    libcubeb-dev \
-    # libusb
-    libusb-1.0-0-dev \
-    # SFML
-    ## libsfml-dev \
-    ## SFML 3.0 is not yet shipped on Debian and Ubuntu
-    # MiniUPNPC
-    libminiupnpc-dev \
-    # MbedTLS
-    ## We are using an outdated 2.x version, and Debian/Ubuntu only ship 3.x now
-    # cURL (this could also be libcurl4-gnutls-dev)
-    libcurl4-openssl-dev \
-    # hidapi
-    libhidapi-dev \
-    # mgba
-    ## libmgba-dev \
-    ## Newer MGBA versions are currently broken with Dolphin
-    # systemd
-    libsystemd-dev \
-    # gtest
-    libgtest-dev \
-    # ALSA
-    libasound2-dev \
-    # PulseAudio
-    libpulse-dev \
-    # LLVM
-    llvm-dev \
-    # BlueZ
-    libbluetooth-dev \
-    # Qt6
-    qt6-base-dev \
-    qt6-base-private-dev \
-    qt6-svg-dev \
-    # Gettext
-    gettext \
-    && wget https://github.com/VirtualGL/virtualgl/releases/download/3.1.4/virtualgl_3.1.4_amd64.deb && \
-    apt-get install -y --no-install-recommends ./virtualgl_3.1.4_amd64.deb \
-    && rm virtualgl_3.1.4_amd64.deb \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/* \
-    && locale-gen en_US.UTF-8
+    pkg-config libgl1-mesa-dev libx11-dev libxrandr-dev libxi-dev \
+    libegl1-mesa-dev libvulkan-dev \
+    libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev \
+    libudev-dev libevdev-dev \
+    glslang-dev glslang-tools libpugixml-dev libxxhash-dev \
+    libbz2-dev liblzma-dev libzstd-dev liblzo2-dev liblz4-dev libspng-dev \
+    libusb-1.0-0-dev libminiupnpc-dev libcurl4-openssl-dev \
+    libhidapi-dev libsystemd-dev libgtest-dev libasound2-dev \
+    libpulse-dev llvm-dev libbluetooth-dev \
+    qt6-base-dev qt6-base-private-dev qt6-svg-dev gettext && \
+    wget https://github.com/VirtualGL/virtualgl/releases/download/3.1.4/virtualgl_3.1.4_amd64.deb && \
+    apt-get install -y --no-install-recommends ./virtualgl_3.1.4_amd64.deb && \
+    rm virtualgl_3.1.4_amd64.deb && \
+    apt-get clean && rm -rf /var/lib/apt/lists/* && \
+    locale-gen en_US.UTF-8
 
 RUN --mount=type=bind,source=.,target=/workspace,rw=true \
     --mount=type=cache,target=/build \
     --mount=type=cache,target=/build-vulkan-layer \
-    if [ -d /workspace/dolphin ]; then SRC=/workspace/dolphin; \
-    elif [ -d /workspace/containers/dolphin/dolphin ]; then SRC=/workspace/containers/dolphin/dolphin; \
-    else echo "dolphin source directory not found in build context"; exit 1; fi && \
-    cd "$SRC" && \
+    if [ -d /workspace/dolphin ]; then \
+    DOLPHIN_SRC=/workspace/dolphin; \
+    elif [ -d /workspace/containers/dolphin/dolphin ]; then \
+    DOLPHIN_SRC=/workspace/containers/dolphin/dolphin; \
+    else \
+    echo "dolphin source directory not found"; exit 1; \
+    fi && \
+    cd "${DOLPHIN_SRC}" && \
     git -c submodule."Externals/Qt".update=none \
     -c submodule."Externals/FFmpeg-bin".update=none \
     -c submodule."Externals/libadrenotools".update=none \
     submodule update --init --recursive && \
     cmake -S . -B /build \
+    -DCMAKE_INSTALL_PREFIX="${DOLPHIN_PREFIX}" \
     -DUSE_SYSTEM_SDL3=OFF \
     -DUSE_SYSTEM_FMT=OFF \
     -DUSE_SYSTEM_MINIZIP-NG=OFF \
@@ -119,8 +53,21 @@ RUN --mount=type=bind,source=.,target=/workspace,rw=true \
     -DUSE_SYSTEM_MBEDTLS=OFF \
     -DUSE_SYSTEM_LIBMGBA=OFF \
     -DCMAKE_POLICY_VERSION_MINIMUM=3.5 && \
-    cmake --build /build -j$(nproc) && \
+    cmake --build /build -j"$(nproc)" && \
     cmake --install /build && \
-    cmake -S /workspace/packages/vulkan-frame-layer -B /build-vulkan-layer && \
-    cmake --build /build-vulkan-layer -j$(nproc) && \
+    cmake -S /workspace/packages/vulkan-frame-layer -B /build-vulkan-layer \
+    -DCMAKE_INSTALL_PREFIX="${VULKAN_LAYER_PREFIX}" && \
+    cmake --build /build-vulkan-layer -j"$(nproc)" && \
     cmake --install /build-vulkan-layer
+
+FROM builder AS runtime
+
+FROM scratch AS dolphin-artifact
+COPY --from=builder /opt/wii-arena-dolphin/ /wii-arena-dolphin/
+
+FROM scratch AS vulkan-layer-artifact
+COPY --from=builder /opt/wii-arena-vulkan-layer/ /wii-arena-vulkan-layer/
+
+FROM scratch AS full-artifact
+COPY --from=builder /opt/wii-arena-dolphin/ /wii-arena-dolphin/
+COPY --from=builder /opt/wii-arena-vulkan-layer/ /wii-arena-vulkan-layer/
