@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager, ExitStack, contextmanager
 from typing import Iterator, NewType
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from wii_arena.core.arena.protocols import Arena
 from wii_arena.core.environment.protocols import Environment
 from wii_arena.core.environment.types import Terminated, Truncated
@@ -20,9 +20,25 @@ DolphinMemoryView = NewType("DolphinMemoryView", memoryview)
 class DolphinFrameBuffer(SupportsDlpack): ...
 
 
-class DolphinAgentAction(
-    BaseModel
-): ...  # TODO: define the structure of an action that can be taken by an agent in the Dolphin environment, e.g. button presses, joystick movements, etc.
+class DolphinAgentAction(BaseModel):
+    A: bool = False
+    B: bool = False
+    X: bool = False
+    Y: bool = False
+    Z: bool = False
+    Start: bool = False
+    Up: bool = False
+    Down: bool = False
+    Left: bool = False
+    Right: bool = False
+    L: bool = False
+    R: bool = False
+    StickX: float = Field(default=0.0, ge=-1.0, le=1.0)
+    StickY: float = Field(default=0.0, ge=-1.0, le=1.0)
+    CStickX: float = Field(default=0.0, ge=-1.0, le=1.0)
+    CStickY: float = Field(default=0.0, ge=-1.0, le=1.0)
+    TriggerLeft: float = Field(default=0.0, ge=0.0, le=1.0)
+    TriggerRight: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 DolphinAgentIndex = NewType("DolphinAgentIndex", int)
