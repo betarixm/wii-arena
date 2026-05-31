@@ -61,6 +61,7 @@ RUN --mount=type=bind,source=.,target=/workspace,rw=true \
     cmake --install /build-vulkan-layer
 
 FROM builder AS runtime
+COPY configurations/dolphin/settings /dolphin-user
 
 FROM scratch AS dolphin-artifact
 COPY --from=builder /opt/wii-arena-dolphin/ /wii-arena-dolphin/

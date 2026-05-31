@@ -19,7 +19,6 @@ from docker.models.images import Image
 from wii_arena.dlpack import Driver
 from wii_arena.dolphin import (
     Dolphin,
-    DolphinAction,
     DolphinFrameBuffer,
     DolphinMemoryView,
 )
@@ -59,15 +58,13 @@ class DockerDolphin(Dolphin, ABC):
             self,
             memory_view: DolphinMemoryView,
             frame_socket: socket.socket,
+            control_socket: socket.socket,
             driver: Driver,
         ):
             self._memory_view = memory_view
             self._frame_socket = frame_socket
+            self._control_socket = control_socket
             self._driver = driver
-
-        def execute(self, action: DolphinAction) -> None:
-            _LOGGER.debug("execute called with action=%s (noop)", action)
-            return None
 
         def memory_view(self) -> DolphinMemoryView:
             return self._memory_view
@@ -102,6 +99,10 @@ class DockerDolphin(Dolphin, ABC):
             ) as frame:
                 yield cast(DolphinFrameBuffer, frame)
 
+        @property
+        def control_socket(self) -> socket.socket:
+            return self._control_socket
+
     def __init__(
         self,
         docker_image: Image,
@@ -122,6 +123,10 @@ class DockerDolphin(Dolphin, ABC):
     def _container_frame_socket_file(self) -> str:
         return f"{self._container_socket_directory}/frame_capture.sock"
 
+    @property
+    def _container_control_socket_file(self) -> str:
+        return f"{self._container_socket_directory}/dolphin_control.sock"
+
     @contextmanager
     def session(self) -> Iterator[DockerDolphin.Session]:
         with (
@@ -133,6 +138,7 @@ class DockerDolphin(Dolphin, ABC):
                 dev_shm_directory=Path(dev_shm_directory),
             )
             frame_socket: socket.socket | None = None
+            control_socket: socket.socket | None = None
             memory_fd_socket_host = Path(socket_directory) / "memory_fd.sock"
             try:
                 container.reload()
@@ -142,8 +148,11 @@ class DockerDolphin(Dolphin, ABC):
                         f"Docker container exited early (status={container.status}).\n{logs}"
                     )
 
-                frame_socket = _connect_frame_socket(
+                frame_socket = _connect_socket(
                     Path(socket_directory) / "frame_capture.sock"
+                )
+                control_socket = _connect_socket(
+                    Path(socket_directory) / "dolphin_control.sock"
                 )
                 memory_view = _resolve_memory_view(
                     container=container,
@@ -154,6 +163,7 @@ class DockerDolphin(Dolphin, ABC):
                 yield DockerDolphin.Session(
                     memory_view=memory_view,
                     frame_socket=frame_socket,
+                    control_socket=control_socket,
                     driver=self._driver,
                 )
             finally:
@@ -161,6 +171,9 @@ class DockerDolphin(Dolphin, ABC):
                 if frame_socket is not None:
                     frame_socket.sendall(b"Q")
                     frame_socket.close()
+                if control_socket is not None:
+                    control_socket.sendall(b"Q")
+                    control_socket.close()
                 container.remove(force=True)
 
     @abstractmethod
@@ -200,9 +213,7 @@ def _resolve_memory_view(
     )
 
 
-def _connect_frame_socket(
-    socket_path: Path, timeout_sec: float = 30.0
-) -> socket.socket:
+def _connect_socket(socket_path: Path, timeout_sec: float = 30.0) -> socket.socket:
     deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
         if socket_path.exists():
