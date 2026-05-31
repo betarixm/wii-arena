@@ -62,7 +62,12 @@ uv add "git+https://github.com/betarixm/wii-arena.git#subdirectory=packages/wii-
 uv add "git+https://github.com/betarixm/wii-arena.git#subdirectory=packages/wii-arena-dolphin-local"
 ```
 
+Local Dolphin expects an existing GPU-backed X11 display. Start or choose that
+display outside Wii Arena, then pass it to `LocalDolphin`.
+
 ```python
+import os
+
 from wii_arena.core.agent.protocols import Agent
 from wii_arena.core.environment.types import Terminated, Truncated
 from wii_arena.cuda_driver import CudaDriver
@@ -79,6 +84,7 @@ with DolphinEnvironment(
             vulcan_layer_path=VULKAN_LAYER_LIBRARY,
             vulkan_layer_configuration_path=VULKAN_LAYER_CONFIG,
             wii_iso_file=ISO_FILE,
+            display=os.environ["DISPLAY"],
             driver=CudaDriver(),
         )
     )
@@ -101,3 +107,7 @@ The environment runs synchronously. It waits for the agent to return an action b
 ### Observation Semantics
 
 The environment returns a memory view, not a memory copy. Therefore, agents must not mutate the observation returned by the environment. The environment does not enforce immutability at the type or runtime level. However, because execution is synchronous, participants may treat observations as immutable within each step.
+
+Frame buffers are exposed as GPU memory through DLPack. The environment preserves
+the captured Vulkan frame format; agents should perform any color conversion they
+need on their side.

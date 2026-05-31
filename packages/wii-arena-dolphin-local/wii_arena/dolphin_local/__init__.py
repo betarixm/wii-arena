@@ -53,10 +53,14 @@ class LocalDolphin(Dolphin):
         vulcan_layer_path: Path,
         vulkan_layer_configuration_path: Path,
         wii_iso_file: Path,
+        display: str,
         driver: Driver,
     ):
+        if not display:
+            raise ValueError("LocalDolphin requires a non-empty X11 display.")
         self._executable_path = executable_path
         self._wii_iso_file = wii_iso_file
+        self._display = display
         self._driver = driver
         self._vulkan_layer_path = vulcan_layer_path
         self._vulkan_layer_configuration_path = vulkan_layer_configuration_path
@@ -74,13 +78,18 @@ class LocalDolphin(Dolphin):
                 vulkan_layer_configuration_path=self._vulkan_layer_configuration_path,
                 frame_socket_path=frame_socket_path,
                 control_socket_path=control_socket_path,
+                display=self._display,
             ) as dolphin_process:
                 frame_socket: socket.socket | None = None
                 control_socket: socket.socket | None = None
                 session: LocalDolphin.Session | None = None
                 try:
-                    frame_socket = _connect_socket(frame_socket_path)
-                    control_socket = _connect_socket(control_socket_path)
+                    frame_socket = _connect_socket(
+                        frame_socket_path, dolphin_process=dolphin_process
+                    )
+                    control_socket = _connect_socket(
+                        control_socket_path, dolphin_process=dolphin_process
+                    )
                     memory_view = _resolve_memory_view(
                         dolphin_pid=dolphin_process.pid,
                         dolphin_process=dolphin_process,
@@ -129,9 +138,15 @@ def _resolve_memory_view(
     )
 
 
-def _connect_socket(socket_path: Path, timeout_sec: float = 30.0) -> socket.socket:
+def _connect_socket(
+    socket_path: Path,
+    timeout_sec: float = 30.0,
+    dolphin_process: subprocess.Popen[bytes] | None = None,
+) -> socket.socket:
     deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
+        if dolphin_process is not None:
+            _ensure_running(dolphin_process)
         if socket_path.exists():
             candidate = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             if candidate.connect_ex(str(socket_path)) == 0:
@@ -207,6 +222,7 @@ def _use_running_dolphin_process(
     vulkan_layer_configuration_path: Path,
     frame_socket_path: Path,
     control_socket_path: Path,
+    display: str,
 ) -> Iterator[subprocess.Popen[bytes]]:
     with tempfile.TemporaryDirectory(prefix="wii-arena-vk-layer-") as temp_directory:
         configuration_path = Path(__file__).parents[3] / "configuration"
@@ -226,6 +242,7 @@ def _use_running_dolphin_process(
         env["VK_INSTANCE_LAYERS"] = layer_name
         env["FRAME_CAPTURE_SOCKET"] = str(frame_socket_path)
         env["CONTROL_SOCKET"] = str(control_socket_path)
+        env["DISPLAY"] = display
         dolphin_process = subprocess.Popen(
             [
                 str(executable_path),
