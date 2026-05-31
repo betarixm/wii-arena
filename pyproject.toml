@@ -4,10 +4,14 @@ version = "0.1.0"
 description = ""
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = ["pillow>=12.2.0"]
+dependencies = [
+    "pillow>=12.2.0",
+    "ruff>=0.15.15",
+]
 
 [dependency-groups]
 dev = [
+    "ruff>=0.15.15",
     "wii-arena-core",
     "wii-arena-cuda-driver",
     "wii-arena-dlpack",

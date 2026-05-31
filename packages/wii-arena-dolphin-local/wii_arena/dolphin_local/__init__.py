@@ -5,6 +5,7 @@ import json
 import logging
 import mmap
 import os
+import shutil
 import socket
 import struct
 import subprocess
@@ -17,7 +18,6 @@ from typing import Any, Iterator, cast
 from wii_arena.dlpack import Driver
 from wii_arena.dolphin import (
     Dolphin,
-    DolphinAction,
     DolphinFrameBuffer,
     DolphinMemoryView,
 )
@@ -31,15 +31,13 @@ class LocalDolphin(Dolphin):
             self,
             memory_view: DolphinMemoryView,
             frame_socket: socket.socket,
+            control_socket: socket.socket,
             driver: Driver,
         ):
             self._memory_view = memory_view
             self._frame_socket = frame_socket
+            self._control_socket = control_socket
             self._driver = driver
-
-        def execute(self, action: DolphinAction) -> None:
-            _LOGGER.debug("execute called with action=%s (noop)", action)
-            return None
 
         def memory_view(self) -> DolphinMemoryView:
             return self._memory_view
@@ -74,6 +72,10 @@ class LocalDolphin(Dolphin):
             ) as frame:
                 yield cast(DolphinFrameBuffer, frame)
 
+        @property
+        def control_socket(self) -> socket.socket:
+            return self._control_socket
+
     def __init__(
         self,
         executable_path: Path,
@@ -93,16 +95,20 @@ class LocalDolphin(Dolphin):
         with tempfile.TemporaryDirectory() as socket_directory:
             socket_directory_path = Path(socket_directory)
             frame_socket_path = socket_directory_path / "frame_capture.sock"
+            control_socket_path = socket_directory_path / "dolphin_control.sock"
             with _use_running_dolphin_process(
                 executable_path=self._executable_path,
                 wii_iso_file=self._wii_iso_file,
                 vulkan_layer_path=self._vulkan_layer_path,
                 vulkan_layer_configuration_path=self._vulkan_layer_configuration_path,
                 frame_socket_path=frame_socket_path,
+                control_socket_path=control_socket_path,
             ) as dolphin_process:
                 frame_socket: socket.socket | None = None
+                control_socket: socket.socket | None = None
                 try:
-                    frame_socket = _connect_frame_socket(frame_socket_path)
+                    frame_socket = _connect_socket(frame_socket_path)
+                    control_socket = _connect_socket(control_socket_path)
                     memory_view = _resolve_memory_view(
                         dolphin_pid=dolphin_process.pid,
                         dolphin_process=dolphin_process,
@@ -110,6 +116,7 @@ class LocalDolphin(Dolphin):
                     yield LocalDolphin.Session(
                         memory_view=memory_view,
                         frame_socket=frame_socket,
+                        control_socket=control_socket,
                         driver=self._driver,
                     )
                 finally:
@@ -119,6 +126,12 @@ class LocalDolphin(Dolphin):
                         except OSError:
                             pass
                         frame_socket.close()
+                    if control_socket is not None:
+                        try:
+                            control_socket.sendall(b"Q")
+                        except OSError:
+                            pass
+                        control_socket.close()
 
 
 def _resolve_memory_view(
@@ -141,9 +154,7 @@ def _resolve_memory_view(
     )
 
 
-def _connect_frame_socket(
-    socket_path: Path, timeout_sec: float = 30.0
-) -> socket.socket:
+def _connect_socket(socket_path: Path, timeout_sec: float = 30.0) -> socket.socket:
     deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
         if socket_path.exists():
@@ -220,8 +231,14 @@ def _use_running_dolphin_process(
     vulkan_layer_path: Path,
     vulkan_layer_configuration_path: Path,
     frame_socket_path: Path,
+    control_socket_path: Path,
 ) -> Iterator[subprocess.Popen[bytes]]:
     with tempfile.TemporaryDirectory(prefix="wii-arena-vk-layer-") as temp_directory:
+        configuration_path = Path(__file__).parents[3] / "configuration"
+        script_path = configuration_path / "controller.py"
+        dolphin_settings_path = configuration_path / "settings"
+        target_settings_path = Path(temp_directory) / "dolphin-user"
+        shutil.copytree(dolphin_settings_path, target_settings_path)
         env = os.environ.copy()
         _prepend_env_path(env, "LD_LIBRARY_PATH", executable_path.parent.parent / "lib")
         _prepend_env_path(env, "LD_LIBRARY_PATH", vulkan_layer_path.parent)
@@ -233,12 +250,15 @@ def _use_running_dolphin_process(
         env["VK_LAYER_PATH"] = str(runtime_layer_config_path.parent)
         env["VK_INSTANCE_LAYERS"] = layer_name
         env["FRAME_CAPTURE_SOCKET"] = str(frame_socket_path)
+        env["CONTROL_SOCKET"] = str(control_socket_path)
         dolphin_process = subprocess.Popen(
             [
                 str(executable_path),
                 f"--exec={wii_iso_file}",
                 "--platform=headless",
                 "--video_backend=Vulkan",
+                f"--user={target_settings_path}",
+                f"--script={script_path}",
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

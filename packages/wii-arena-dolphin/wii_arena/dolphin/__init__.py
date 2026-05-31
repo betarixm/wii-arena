@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import socket
+import struct
 from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager, ExitStack, contextmanager
 from typing import Iterator, NewType
@@ -47,12 +49,64 @@ DolphinAction = list[tuple[DolphinAgentIndex, DolphinAgentAction]]
 
 class Dolphin(SupportsSession):
     class Session(ABC, SupportsSession.Session):
-        @abstractmethod
-        def execute(self, action: DolphinAction) -> None: ...
+        def execute(self, action: DolphinAction) -> None:
+            _LOGGER.debug("execute called with action=%s (noop)", action)
+            _packed_action = self._pack_action(action)
+            self.control_socket.sendall(b"E" + _packed_action)
+            if self.control_socket.recv(1) != b"D":
+                raise RuntimeError(
+                    "Dolphin session control socket disconnected unexpectedly during action execution"
+                )
+            return None
+
         @abstractmethod
         def memory_view(self) -> DolphinMemoryView: ...
         @abstractmethod
         def frame_buffer(self) -> AbstractContextManager[DolphinFrameBuffer]: ...
+        @property
+        @abstractmethod
+        def control_socket(self) -> socket.socket: ...
+
+        @staticmethod
+        def _pack_action(actions: DolphinAction) -> bytes:
+            num_agents = len(actions)
+            format_string = "<B" + ("H6f" * len(actions))
+
+            data: list[int | float] = [num_agents]
+            for agent_idx, action in actions:
+                button_mask = 0
+                for j, btn in enumerate(
+                    [
+                        "A",
+                        "B",
+                        "X",
+                        "Y",
+                        "Z",
+                        "Start",
+                        "Up",
+                        "Down",
+                        "Left",
+                        "Right",
+                        "L",
+                        "R",
+                    ]
+                ):
+                    if getattr(action, btn):
+                        button_mask |= 1 << j
+                agent_header = (((agent_idx - 1) & 0b11) << 12) | (button_mask & 0xFFF)
+                data.append(agent_header)
+                data.extend(
+                    [
+                        action.StickX,
+                        action.StickY,
+                        action.CStickX,
+                        action.CStickY,
+                        action.TriggerLeft,
+                        action.TriggerRight,
+                    ]
+                )
+
+            return struct.pack(format_string, *data)
 
     @abstractmethod
     def session(self) -> AbstractContextManager[Dolphin.Session]: ...
