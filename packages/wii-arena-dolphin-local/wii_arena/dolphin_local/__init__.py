@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import array
 import json
-import logging
 import mmap
 import os
 import shutil
 import socket
-import struct
 import subprocess
 import tempfile
 import time
@@ -20,9 +17,8 @@ from wii_arena.dolphin import (
     Dolphin,
     DolphinFrameBuffer,
     DolphinMemoryView,
+    receive_frame_buffer,
 )
-
-_LOGGER = logging.getLogger(__name__)
 
 
 class LocalDolphin(Dolphin):
@@ -42,35 +38,10 @@ class LocalDolphin(Dolphin):
         def memory_view(self) -> DolphinMemoryView:
             return self._memory_view
 
-        @contextmanager
-        def frame_buffer(self) -> Iterator[DolphinFrameBuffer]:
-            self._frame_socket.sendall(b"R")
-            fds = array.array("i")
-            msg, ancdata, _, _ = self._frame_socket.recvmsg(
-                4096, socket.CMSG_LEN(struct.calcsize("i"))
+        def frame_buffer(self) -> DolphinFrameBuffer:
+            return self._replace_frame_buffer(
+                receive_frame_buffer(self._frame_socket, self._driver)
             )
-            if not msg:
-                raise RuntimeError("Frame socket closed before sending a frame packet.")
-
-            fd: int | None = None
-            for cmsg_level, cmsg_type, cmsg_data in ancdata:
-                if cmsg_level == socket.SOL_SOCKET and cmsg_type == socket.SCM_RIGHTS:
-                    fds.frombytes(cmsg_data[: struct.calcsize("i")])
-                    if fds:
-                        fd = int(fds[0])
-                        break
-            if fd is None:
-                raise RuntimeError("Layer response did not include a frame fd.")
-
-            if len(msg) < 20:
-                os.close(fd)
-                raise RuntimeError(f"Frame header too short: {len(msg)}")
-
-            _, height, stride, size, _frame_id = struct.unpack("IIIII", msg[:20])
-            with self._driver.dlpack_from_file_descriptor(
-                fd, size, height, stride
-            ) as frame:
-                yield cast(DolphinFrameBuffer, frame)
 
         @property
         def control_socket(self) -> socket.socket:
@@ -106,6 +77,7 @@ class LocalDolphin(Dolphin):
             ) as dolphin_process:
                 frame_socket: socket.socket | None = None
                 control_socket: socket.socket | None = None
+                session: LocalDolphin.Session | None = None
                 try:
                     frame_socket = _connect_socket(frame_socket_path)
                     control_socket = _connect_socket(control_socket_path)
@@ -113,13 +85,16 @@ class LocalDolphin(Dolphin):
                         dolphin_pid=dolphin_process.pid,
                         dolphin_process=dolphin_process,
                     )
-                    yield LocalDolphin.Session(
+                    session = LocalDolphin.Session(
                         memory_view=memory_view,
                         frame_socket=frame_socket,
                         control_socket=control_socket,
                         driver=self._driver,
                     )
+                    yield session
                 finally:
+                    if session is not None:
+                        session.close_frame_buffer()
                     if frame_socket is not None:
                         try:
                             frame_socket.sendall(b"Q")
@@ -255,7 +230,7 @@ def _use_running_dolphin_process(
             [
                 str(executable_path),
                 f"--exec={wii_iso_file}",
-                "--platform=headless",
+                "--platform=x11",
                 "--video_backend=Vulkan",
                 f"--user={target_settings_path}",
                 f"--script={script_path}",

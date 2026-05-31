@@ -22,54 +22,46 @@ extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInst
 extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice device,
                                                                         const char *name);
 
-struct ImageInfo {
-    VkFormat format = VK_FORMAT_UNDEFINED;
-    VkExtent3D extent{};
-    VkImageUsageFlags usage = 0;
-    VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
-};
-
-struct ImageViewInfo {
-    VkImage image = VK_NULL_HANDLE;
-};
-
-struct RenderPassInfo {
-    std::vector<VkImageLayout> final_layouts;
-};
-
-struct FramebufferInfo {
-    VkRenderPass render_pass = VK_NULL_HANDLE;
-    std::vector<VkImageView> attachments;
-};
-
-struct CmdState {
-    VkRenderPass render_pass = VK_NULL_HANDLE;
-    VkFramebuffer framebuffer = VK_NULL_HANDLE;
-};
-
 struct ExportedResource {
     VkBuffer buffer = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
 };
 
+struct CapturedFrame {
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t stride = 0;
+    uint32_t size = 0;
+    uint32_t frame_id = 0;
+    VkFormat format = VK_FORMAT_UNDEFINED;
+};
+
+struct SwapchainInfo {
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    VkExtent2D extent{};
+    std::vector<VkImage> images;
+};
+
+struct QueueInfo {
+    uint32_t family = 0;
+    VkQueueFlags flags = 0;
+};
+
 static PFN_vkGetInstanceProcAddr g_next_gipa = nullptr;
 static PFN_vkGetDeviceProcAddr g_next_gdpa = nullptr;
 static PFN_vkGetPhysicalDeviceMemoryProperties g_get_memory_props = nullptr;
-static PFN_vkCreateImage g_next_create_image = nullptr;
-static PFN_vkDestroyImage g_next_destroy_image = nullptr;
-static PFN_vkCreateImageView g_next_create_image_view = nullptr;
-static PFN_vkDestroyImageView g_next_destroy_image_view = nullptr;
-static PFN_vkCreateRenderPass g_next_create_render_pass = nullptr;
-static PFN_vkDestroyRenderPass g_next_destroy_render_pass = nullptr;
-static PFN_vkCreateFramebuffer g_next_create_framebuffer = nullptr;
-static PFN_vkDestroyFramebuffer g_next_destroy_framebuffer = nullptr;
-static PFN_vkCmdPipelineBarrier g_next_cmd_pipeline_barrier = nullptr;
-static PFN_vkCmdBeginRenderPass g_next_cmd_begin_render_pass = nullptr;
-static PFN_vkCmdEndRenderPass g_next_cmd_end_render_pass = nullptr;
+static PFN_vkGetPhysicalDeviceQueueFamilyProperties g_get_queue_family_props = nullptr;
+static PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR g_get_surface_capabilities = nullptr;
+
+static PFN_vkCreateDevice g_next_create_device = nullptr;
+static PFN_vkCreateSwapchainKHR g_next_create_swapchain_khr = nullptr;
+static PFN_vkDestroySwapchainKHR g_next_destroy_swapchain_khr = nullptr;
+static PFN_vkGetSwapchainImagesKHR g_next_get_swapchain_images_khr = nullptr;
+static PFN_vkQueuePresentKHR g_next_queue_present_khr = nullptr;
 static PFN_vkGetDeviceQueue g_next_get_device_queue = nullptr;
 static PFN_vkQueueSubmit g_next_queue_submit = nullptr;
-static PFN_vkQueueSubmit2 g_next_queue_submit2 = nullptr;
-static PFN_vkQueueSubmit2KHR g_next_queue_submit2_khr = nullptr;
 static PFN_vkQueueWaitIdle g_next_queue_wait_idle = nullptr;
 static PFN_vkCreateBuffer g_next_create_buffer = nullptr;
 static PFN_vkDestroyBuffer g_next_destroy_buffer = nullptr;
@@ -84,56 +76,28 @@ static PFN_vkAllocateCommandBuffers g_next_allocate_command_buffers = nullptr;
 static PFN_vkFreeCommandBuffers g_next_free_command_buffers = nullptr;
 static PFN_vkBeginCommandBuffer g_next_begin_command_buffer = nullptr;
 static PFN_vkEndCommandBuffer g_next_end_command_buffer = nullptr;
+static PFN_vkCmdPipelineBarrier g_next_cmd_pipeline_barrier = nullptr;
 static PFN_vkCmdCopyImageToBuffer g_next_cmd_copy_image_to_buffer = nullptr;
 
+static VkPhysicalDevice g_physical_device = VK_NULL_HANDLE;
 static VkDevice g_device = VK_NULL_HANDLE;
-static uint32_t g_default_queue_family = 0;
 static VkPhysicalDeviceMemoryProperties g_memory_props{};
-static std::atomic<uint32_t> g_frame_id{0};
-static std::atomic<uint32_t> g_submit_count{0};
-static std::atomic<uint32_t> g_pending_requests{0};
-static std::atomic<bool> g_server_started{false};
-static std::atomic<uint32_t> g_copy_logs{0};
-static std::atomic<uint32_t> g_export_fail_logs{0};
-static std::mutex g_mu;
-static std::mutex g_client_mu;
-static std::mutex g_export_mu;
-static int g_client_fd = -1;
-static std::deque<ExportedResource> g_retained_exports;
-static std::unordered_map<VkImage, ImageInfo> g_images;
-static std::unordered_map<VkImageView, ImageViewInfo> g_image_views;
-static std::unordered_map<VkRenderPass, RenderPassInfo> g_render_passes;
-static std::unordered_map<VkFramebuffer, FramebufferInfo> g_framebuffers;
-static std::unordered_map<VkCommandBuffer, CmdState> g_cmds;
-static std::unordered_map<VkQueue, uint32_t> g_queue_families;
+static uint32_t g_default_queue_family = 0;
+static std::vector<VkQueueFlags> g_queue_family_flags;
 
-static uint32_t skip_submits() {
-    const char *raw = std::getenv("FRAME_CAPTURE_SKIP_SUBMITS");
-    if (!raw || !*raw) {
-        return 300;
-    }
-    char *end = nullptr;
-    unsigned long value = std::strtoul(raw, &end, 10);
-    return end == raw ? 300 : static_cast<uint32_t>(value);
-}
+static std::atomic<bool> g_server_started{false};
+static std::atomic<uint32_t> g_frame_id{0};
+static std::atomic<uint32_t> g_capture_fail_logs{0};
+static std::mutex g_mu;
+static std::mutex g_export_mu;
+static std::unordered_map<VkSwapchainKHR, SwapchainInfo> g_swapchains;
+static std::unordered_map<VkQueue, QueueInfo> g_queues;
+static std::deque<ExportedResource> g_retained_exports;
+static CapturedFrame g_latest_frame;
 
 static bool verbose_logging() {
     const char *raw = std::getenv("FRAME_CAPTURE_VERBOSE");
     return raw && std::strcmp(raw, "0") != 0 && raw[0] != '\0';
-}
-
-static bool try_acquire_request() {
-    uint32_t current = g_pending_requests.load();
-    while (current > 0) {
-        if (g_pending_requests.compare_exchange_weak(current, current - 1)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-static void release_request() {
-    g_pending_requests.fetch_add(1);
 }
 
 static uint32_t env_u32(const char *name, uint32_t fallback) {
@@ -146,18 +110,14 @@ static uint32_t env_u32(const char *name, uint32_t fallback) {
     return end == raw ? fallback : static_cast<uint32_t>(value);
 }
 
-static bool passes_capture_size_filter(const ImageInfo &info) {
-    const uint32_t want_w = env_u32("FRAME_CAPTURE_WIDTH", 608);
-    const uint32_t want_h = env_u32("FRAME_CAPTURE_HEIGHT", 456);
-    if (want_w == 0 || want_h == 0) {
-        return true;
-    }
-    return info.extent.width == want_w && info.extent.height == want_h;
-}
-
 static bool is_supported_format(VkFormat format) {
     return format == VK_FORMAT_R8G8B8A8_UNORM || format == VK_FORMAT_R8G8B8A8_SRGB ||
            format == VK_FORMAT_B8G8R8A8_UNORM || format == VK_FORMAT_B8G8R8A8_SRGB;
+}
+
+static bool queue_family_supports_transfer(uint32_t family) {
+    return family < g_queue_family_flags.size() &&
+           (g_queue_family_flags[family] & VK_QUEUE_TRANSFER_BIT);
 }
 
 static uint32_t find_memory_type(uint32_t bits, VkMemoryPropertyFlags flags) {
@@ -175,6 +135,12 @@ static const char *socket_path() {
         path = "/tmp/frame_capture.sock";
     }
     return path;
+}
+
+static void log_capture_failure(const char *label, int code = 0) {
+    if (g_capture_fail_logs.fetch_add(1) < 80) {
+        std::fprintf(stderr, "[frame-capture] %s code=%d\n", label, code);
+    }
 }
 
 static void destroy_exported_resource(const ExportedResource &resource) {
@@ -195,9 +161,11 @@ static void destroy_buffer_memory(VkBuffer buffer, VkDeviceMemory memory) {
     }
 }
 
-static void retain_exported_resource(VkBuffer buffer, VkDeviceMemory memory) {
+static void retain_exported_resource_locked(VkBuffer buffer, VkDeviceMemory memory) {
+    if (buffer == VK_NULL_HANDLE && memory == VK_NULL_HANDLE) {
+        return;
+    }
     const uint32_t retain_count = env_u32("FRAME_CAPTURE_RETAINED_EXPORTS", 16);
-    std::lock_guard<std::mutex> lock(g_export_mu);
     g_retained_exports.push_back(ExportedResource{buffer, memory});
     while (retain_count > 0 && g_retained_exports.size() > retain_count) {
         destroy_exported_resource(g_retained_exports.front());
@@ -205,19 +173,55 @@ static void retain_exported_resource(VkBuffer buffer, VkDeviceMemory memory) {
     }
 }
 
-static void set_client_fd(int fd) {
-    std::lock_guard<std::mutex> lock(g_client_mu);
-    if (g_client_fd >= 0) {
-        close(g_client_fd);
+static bool send_latest_frame_fd(int client) {
+    std::lock_guard<std::mutex> lock(g_export_mu);
+    if (g_latest_frame.memory == VK_NULL_HANDLE || !g_next_get_memory_fd_khr) {
+        const char no_frame = 'N';
+        return write(client, &no_frame, 1) == 1;
     }
-    g_client_fd = fd;
-}
 
-static void clear_client_fd(int fd) {
-    std::lock_guard<std::mutex> lock(g_client_mu);
-    if (g_client_fd == fd) {
-        g_client_fd = -1;
+    VkMemoryGetFdInfoKHR fd_info{};
+    fd_info.sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR;
+    fd_info.memory = g_latest_frame.memory;
+    fd_info.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+    int fd = -1;
+    VkResult rc = g_next_get_memory_fd_khr(g_device, &fd_info, &fd);
+    if (rc != VK_SUCCESS || fd < 0) {
+        log_capture_failure("export latest fd failed", rc);
+        const char no_frame = 'N';
+        return write(client, &no_frame, 1) == 1;
     }
+
+    uint32_t header[6] = {
+        g_latest_frame.width,
+        g_latest_frame.height,
+        g_latest_frame.stride,
+        g_latest_frame.size,
+        g_latest_frame.frame_id,
+        static_cast<uint32_t>(g_latest_frame.format),
+    };
+    iovec iov{};
+    iov.iov_base = header;
+    iov.iov_len = sizeof(header);
+
+    char control[CMSG_SPACE(sizeof(int))];
+    std::memset(control, 0, sizeof(control));
+    msghdr msg{};
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = control;
+    msg.msg_controllen = sizeof(control);
+
+    cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
+    cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+    std::memcpy(CMSG_DATA(cmsg), &fd, sizeof(int));
+    msg.msg_controllen = cmsg->cmsg_len;
+
+    const bool sent = sendmsg(client, &msg, MSG_NOSIGNAL) >= 0;
+    close(fd);
+    return sent;
 }
 
 static void request_server_loop() {
@@ -251,18 +255,16 @@ static void request_server_loop() {
         if (client < 0) {
             continue;
         }
-        set_client_fd(client);
-
         char command = 0;
         while (read(client, &command, 1) == 1) {
             if (command == 'R') {
-                g_pending_requests.fetch_add(1);
+                if (!send_latest_frame_fd(client)) {
+                    break;
+                }
             } else if (command == 'Q') {
                 break;
             }
         }
-
-        clear_client_fd(client);
         close(client);
     }
 }
@@ -275,70 +277,18 @@ static void start_request_server_once() {
     std::thread(request_server_loop).detach();
 }
 
-static bool send_external_frame_fd(uint32_t width, uint32_t height, uint32_t stride, uint32_t size,
-                                   VkFormat format, int fd) {
-    const uint32_t frame_id = g_frame_id.fetch_add(1);
-    uint32_t header[6] = {width, height, stride, size, frame_id, static_cast<uint32_t>(format)};
-    iovec iov{};
-    iov.iov_base = header;
-    iov.iov_len = sizeof(header);
-
-    char control[CMSG_SPACE(sizeof(int))];
-    std::memset(control, 0, sizeof(control));
-    msghdr msg{};
-    msg.msg_iov = &iov;
-    msg.msg_iovlen = 1;
-    msg.msg_control = control;
-    msg.msg_controllen = sizeof(control);
-
-    cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
-    cmsg->cmsg_level = SOL_SOCKET;
-    cmsg->cmsg_type = SCM_RIGHTS;
-    cmsg->cmsg_len = CMSG_LEN(sizeof(int));
-    std::memcpy(CMSG_DATA(cmsg), &fd, sizeof(int));
-    msg.msg_controllen = cmsg->cmsg_len;
-
-    std::lock_guard<std::mutex> lock(g_client_mu);
-    if (g_client_fd < 0) {
-        return false;
-    }
-    if (sendmsg(g_client_fd, &msg, MSG_NOSIGNAL) < 0) {
-        close(g_client_fd);
-        g_client_fd = -1;
-        return false;
-    }
-    return true;
-}
-
 static void load_device_functions(VkDevice device) {
-    g_next_create_image = reinterpret_cast<PFN_vkCreateImage>(g_next_gdpa(device, "vkCreateImage"));
-    g_next_destroy_image =
-        reinterpret_cast<PFN_vkDestroyImage>(g_next_gdpa(device, "vkDestroyImage"));
-    g_next_create_image_view =
-        reinterpret_cast<PFN_vkCreateImageView>(g_next_gdpa(device, "vkCreateImageView"));
-    g_next_destroy_image_view =
-        reinterpret_cast<PFN_vkDestroyImageView>(g_next_gdpa(device, "vkDestroyImageView"));
-    g_next_create_render_pass =
-        reinterpret_cast<PFN_vkCreateRenderPass>(g_next_gdpa(device, "vkCreateRenderPass"));
-    g_next_destroy_render_pass =
-        reinterpret_cast<PFN_vkDestroyRenderPass>(g_next_gdpa(device, "vkDestroyRenderPass"));
-    g_next_create_framebuffer =
-        reinterpret_cast<PFN_vkCreateFramebuffer>(g_next_gdpa(device, "vkCreateFramebuffer"));
-    g_next_destroy_framebuffer =
-        reinterpret_cast<PFN_vkDestroyFramebuffer>(g_next_gdpa(device, "vkDestroyFramebuffer"));
-    g_next_cmd_pipeline_barrier =
-        reinterpret_cast<PFN_vkCmdPipelineBarrier>(g_next_gdpa(device, "vkCmdPipelineBarrier"));
-    g_next_cmd_begin_render_pass =
-        reinterpret_cast<PFN_vkCmdBeginRenderPass>(g_next_gdpa(device, "vkCmdBeginRenderPass"));
-    g_next_cmd_end_render_pass =
-        reinterpret_cast<PFN_vkCmdEndRenderPass>(g_next_gdpa(device, "vkCmdEndRenderPass"));
+    g_next_create_swapchain_khr = reinterpret_cast<PFN_vkCreateSwapchainKHR>(
+        g_next_gdpa(device, "vkCreateSwapchainKHR"));
+    g_next_destroy_swapchain_khr = reinterpret_cast<PFN_vkDestroySwapchainKHR>(
+        g_next_gdpa(device, "vkDestroySwapchainKHR"));
+    g_next_get_swapchain_images_khr = reinterpret_cast<PFN_vkGetSwapchainImagesKHR>(
+        g_next_gdpa(device, "vkGetSwapchainImagesKHR"));
+    g_next_queue_present_khr =
+        reinterpret_cast<PFN_vkQueuePresentKHR>(g_next_gdpa(device, "vkQueuePresentKHR"));
     g_next_get_device_queue =
         reinterpret_cast<PFN_vkGetDeviceQueue>(g_next_gdpa(device, "vkGetDeviceQueue"));
     g_next_queue_submit = reinterpret_cast<PFN_vkQueueSubmit>(g_next_gdpa(device, "vkQueueSubmit"));
-    g_next_queue_submit2 =
-        reinterpret_cast<PFN_vkQueueSubmit2>(g_next_gdpa(device, "vkQueueSubmit2"));
-    g_next_queue_submit2_khr =
-        reinterpret_cast<PFN_vkQueueSubmit2KHR>(g_next_gdpa(device, "vkQueueSubmit2KHR"));
     g_next_queue_wait_idle =
         reinterpret_cast<PFN_vkQueueWaitIdle>(g_next_gdpa(device, "vkQueueWaitIdle"));
     g_next_create_buffer =
@@ -366,29 +316,40 @@ static void load_device_functions(VkDevice device) {
         reinterpret_cast<PFN_vkBeginCommandBuffer>(g_next_gdpa(device, "vkBeginCommandBuffer"));
     g_next_end_command_buffer =
         reinterpret_cast<PFN_vkEndCommandBuffer>(g_next_gdpa(device, "vkEndCommandBuffer"));
+    g_next_cmd_pipeline_barrier =
+        reinterpret_cast<PFN_vkCmdPipelineBarrier>(g_next_gdpa(device, "vkCmdPipelineBarrier"));
     g_next_cmd_copy_image_to_buffer =
         reinterpret_cast<PFN_vkCmdCopyImageToBuffer>(g_next_gdpa(device, "vkCmdCopyImageToBuffer"));
 }
 
-static bool copy_image_to_export_fd(VkQueue queue, uint32_t family, VkImage image,
-                                    const ImageInfo &info) {
-    auto log_fail = [](const char *label, int code = 0) {
-        if (g_export_fail_logs.fetch_add(1) < 40) {
-            std::fprintf(stderr, "[frame-capture] export fd failed: %s code=%d\n", label, code);
+static bool choose_capture_queue(VkQueue present_queue, VkQueue *capture_queue,
+                                 uint32_t *capture_family) {
+    {
+        std::lock_guard<std::mutex> lock(g_mu);
+        auto present_it = g_queues.find(present_queue);
+        if (present_it != g_queues.end() && (present_it->second.flags & VK_QUEUE_TRANSFER_BIT)) {
+            *capture_queue = present_queue;
+            *capture_family = present_it->second.family;
+            return true;
         }
-    };
-    if (!g_device || !g_next_create_buffer || !g_next_cmd_copy_image_to_buffer ||
-        !g_next_get_memory_fd_khr || !is_supported_format(info.format) || info.extent.width < 64 ||
-        info.extent.height < 64 || info.extent.width > 4096 || info.extent.height > 4096) {
-        log_fail("precheck");
-        return false;
+        for (const auto &entry : g_queues) {
+            if (entry.second.flags & VK_QUEUE_TRANSFER_BIT) {
+                *capture_queue = entry.first;
+                *capture_family = entry.second.family;
+                return true;
+            }
+        }
     }
+    if (queue_family_supports_transfer(g_default_queue_family)) {
+        *capture_queue = present_queue;
+        *capture_family = g_default_queue_family;
+        return true;
+    }
+    return false;
+}
 
-    const uint32_t width = info.extent.width;
-    const uint32_t height = info.extent.height;
-    const uint32_t stride = width * 4;
-    const VkDeviceSize size = static_cast<VkDeviceSize>(stride) * height;
-
+static bool create_export_buffer(VkDeviceSize payload_size, VkBuffer *buffer, VkDeviceMemory *memory,
+                                 VkDeviceSize *allocation_size) {
     VkExternalMemoryBufferCreateInfo ext_buf{};
     ext_buf.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO;
     ext_buf.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
@@ -396,19 +357,18 @@ static bool copy_image_to_export_fd(VkQueue queue, uint32_t family, VkImage imag
     VkBufferCreateInfo buffer_ci{};
     buffer_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     buffer_ci.pNext = &ext_buf;
-    buffer_ci.size = size;
+    buffer_ci.size = payload_size;
     buffer_ci.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     buffer_ci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-    VkBuffer buffer = VK_NULL_HANDLE;
-    VkResult rc = g_next_create_buffer(g_device, &buffer_ci, nullptr, &buffer);
+    VkResult rc = g_next_create_buffer(g_device, &buffer_ci, nullptr, buffer);
     if (rc != VK_SUCCESS) {
-        log_fail("vkCreateBuffer", rc);
+        log_capture_failure("vkCreateBuffer failed", rc);
         return false;
     }
 
     VkMemoryRequirements req{};
-    g_next_get_buffer_memory_requirements(g_device, buffer, &req);
+    g_next_get_buffer_memory_requirements(g_device, *buffer, &req);
     uint32_t mem_type = find_memory_type(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     if (mem_type == UINT32_MAX) {
         for (uint32_t i = 0; i < g_memory_props.memoryTypeCount; ++i) {
@@ -419,12 +379,9 @@ static bool copy_image_to_export_fd(VkQueue queue, uint32_t family, VkImage imag
         }
     }
     if (mem_type == UINT32_MAX) {
-        if (g_export_fail_logs.fetch_add(1) < 40) {
-            std::fprintf(stderr,
-                         "[frame-capture] export fd failed: memoryType bits=0x%x reqSize=%llu\n",
-                         req.memoryTypeBits, static_cast<unsigned long long>(req.size));
-        }
-        g_next_destroy_buffer(g_device, buffer, nullptr);
+        log_capture_failure("no compatible export memory type");
+        g_next_destroy_buffer(g_device, *buffer, nullptr);
+        *buffer = VK_NULL_HANDLE;
         return false;
     }
 
@@ -438,28 +395,82 @@ static bool copy_image_to_export_fd(VkQueue queue, uint32_t family, VkImage imag
     alloc.allocationSize = req.size;
     alloc.memoryTypeIndex = mem_type;
 
-    VkDeviceMemory memory = VK_NULL_HANDLE;
-    rc = g_next_allocate_memory(g_device, &alloc, nullptr, &memory);
+    rc = g_next_allocate_memory(g_device, &alloc, nullptr, memory);
     if (rc != VK_SUCCESS) {
-        log_fail("vkAllocateMemory", rc);
-        g_next_destroy_buffer(g_device, buffer, nullptr);
+        log_capture_failure("vkAllocateMemory failed", rc);
+        g_next_destroy_buffer(g_device, *buffer, nullptr);
+        *buffer = VK_NULL_HANDLE;
         return false;
     }
-    rc = g_next_bind_buffer_memory(g_device, buffer, memory, 0);
+    rc = g_next_bind_buffer_memory(g_device, *buffer, *memory, 0);
     if (rc != VK_SUCCESS) {
-        log_fail("vkBindBufferMemory", rc);
-        destroy_buffer_memory(buffer, memory);
+        log_capture_failure("vkBindBufferMemory failed", rc);
+        destroy_buffer_memory(*buffer, *memory);
+        *buffer = VK_NULL_HANDLE;
+        *memory = VK_NULL_HANDLE;
+        return false;
+    }
+
+    *allocation_size = req.size;
+    return true;
+}
+
+static bool capture_present_image(VkQueue present_queue, VkSwapchainKHR swapchain,
+                                  uint32_t image_index, const VkSemaphore *wait_semaphores,
+                                  uint32_t wait_semaphore_count) {
+    if (!g_device || !g_next_queue_submit || !g_next_queue_wait_idle ||
+        !g_next_cmd_copy_image_to_buffer || !g_next_cmd_pipeline_barrier) {
+        log_capture_failure("capture unavailable");
+        return false;
+    }
+
+    SwapchainInfo swapchain_info;
+    {
+        std::lock_guard<std::mutex> lock(g_mu);
+        auto it = g_swapchains.find(swapchain);
+        if (it == g_swapchains.end()) {
+            log_capture_failure("unknown swapchain");
+            return false;
+        }
+        swapchain_info = it->second;
+    }
+    if (image_index >= swapchain_info.images.size()) {
+        log_capture_failure("present image index out of range");
+        return false;
+    }
+    if (!is_supported_format(swapchain_info.format)) {
+        log_capture_failure("unsupported swapchain format",
+                            static_cast<int>(swapchain_info.format));
+        return false;
+    }
+
+    VkQueue capture_queue = VK_NULL_HANDLE;
+    uint32_t capture_family = 0;
+    if (!choose_capture_queue(present_queue, &capture_queue, &capture_family)) {
+        log_capture_failure("no transfer-capable queue for present capture");
+        return false;
+    }
+
+    const uint32_t width = swapchain_info.extent.width;
+    const uint32_t height = swapchain_info.extent.height;
+    const uint32_t stride = width * 4;
+    const VkDeviceSize payload_size = static_cast<VkDeviceSize>(stride) * height;
+
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkDeviceSize allocation_size = 0;
+    if (!create_export_buffer(payload_size, &buffer, &memory, &allocation_size)) {
         return false;
     }
 
     VkCommandPoolCreateInfo pool_ci{};
     pool_ci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     pool_ci.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-    pool_ci.queueFamilyIndex = family;
+    pool_ci.queueFamilyIndex = capture_family;
     VkCommandPool pool = VK_NULL_HANDLE;
-    rc = g_next_create_command_pool(g_device, &pool_ci, nullptr, &pool);
+    VkResult rc = g_next_create_command_pool(g_device, &pool_ci, nullptr, &pool);
     if (rc != VK_SUCCESS) {
-        log_fail("vkCreateCommandPool", rc);
+        log_capture_failure("vkCreateCommandPool failed", rc);
         destroy_buffer_memory(buffer, memory);
         return false;
     }
@@ -472,7 +483,7 @@ static bool copy_image_to_export_fd(VkQueue queue, uint32_t family, VkImage imag
     VkCommandBuffer cmd = VK_NULL_HANDLE;
     rc = g_next_allocate_command_buffers(g_device, &cmd_ai, &cmd);
     if (rc != VK_SUCCESS) {
-        log_fail("vkAllocateCommandBuffers", rc);
+        log_capture_failure("vkAllocateCommandBuffers failed", rc);
         g_next_destroy_command_pool(g_device, pool, nullptr);
         destroy_buffer_memory(buffer, memory);
         return false;
@@ -483,21 +494,19 @@ static bool copy_image_to_export_fd(VkQueue queue, uint32_t family, VkImage imag
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     rc = g_next_begin_command_buffer(cmd, &begin);
     if (rc != VK_SUCCESS) {
-        log_fail("vkBeginCommandBuffer", rc);
+        log_capture_failure("vkBeginCommandBuffer failed", rc);
         g_next_free_command_buffers(g_device, pool, 1, &cmd);
         g_next_destroy_command_pool(g_device, pool, nullptr);
         destroy_buffer_memory(buffer, memory);
         return false;
     }
 
-    VkImageLayout assumed_layout = info.layout == VK_IMAGE_LAYOUT_UNDEFINED
-                                       ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
-                                       : info.layout;
+    VkImage image = swapchain_info.images[image_index];
     VkImageMemoryBarrier to_transfer{};
     to_transfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    to_transfer.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+    to_transfer.srcAccessMask = 0;
     to_transfer.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-    to_transfer.oldLayout = assumed_layout;
+    to_transfer.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
     to_transfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     to_transfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     to_transfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -505,7 +514,7 @@ static bool copy_image_to_export_fd(VkQueue queue, uint32_t family, VkImage imag
     to_transfer.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     to_transfer.subresourceRange.levelCount = 1;
     to_transfer.subresourceRange.layerCount = 1;
-    g_next_cmd_pipeline_barrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+    g_next_cmd_pipeline_barrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                                 VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
                                 &to_transfer);
 
@@ -518,113 +527,70 @@ static bool copy_image_to_export_fd(VkQueue queue, uint32_t family, VkImage imag
 
     VkImageMemoryBarrier back = to_transfer;
     back.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-    back.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+    back.dstAccessMask = 0;
     back.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    back.newLayout = assumed_layout;
+    back.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
     g_next_cmd_pipeline_barrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                                VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1,
                                 &back);
+
     rc = g_next_end_command_buffer(cmd);
     if (rc != VK_SUCCESS) {
-        log_fail("vkEndCommandBuffer", rc);
+        log_capture_failure("vkEndCommandBuffer failed", rc);
         g_next_free_command_buffers(g_device, pool, 1, &cmd);
         g_next_destroy_command_pool(g_device, pool, nullptr);
         destroy_buffer_memory(buffer, memory);
         return false;
     }
 
+    std::vector<VkPipelineStageFlags> wait_stages(wait_semaphore_count,
+                                                  VK_PIPELINE_STAGE_TRANSFER_BIT);
     VkSubmitInfo submit{};
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.waitSemaphoreCount = wait_semaphore_count;
+    submit.pWaitSemaphores = wait_semaphores;
+    submit.pWaitDstStageMask = wait_stages.empty() ? nullptr : wait_stages.data();
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &cmd;
-    rc = g_next_queue_submit(queue, 1, &submit, VK_NULL_HANDLE);
+
+    rc = g_next_queue_submit(capture_queue, 1, &submit, VK_NULL_HANDLE);
     if (rc != VK_SUCCESS) {
-        log_fail("vkQueueSubmit(copy)", rc);
+        log_capture_failure("vkQueueSubmit(capture) failed", rc);
         g_next_free_command_buffers(g_device, pool, 1, &cmd);
         g_next_destroy_command_pool(g_device, pool, nullptr);
         destroy_buffer_memory(buffer, memory);
         return false;
     }
-    g_next_queue_wait_idle(queue);
-
-    VkMemoryGetFdInfoKHR fd_info{};
-    fd_info.sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR;
-    fd_info.memory = memory;
-    fd_info.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
-    int fd = -1;
-    rc = g_next_get_memory_fd_khr(g_device, &fd_info, &fd);
-    if (rc != VK_SUCCESS || fd < 0) {
-        log_fail("vkGetMemoryFdKHR", rc);
+    rc = g_next_queue_wait_idle(capture_queue);
+    if (rc != VK_SUCCESS) {
+        log_capture_failure("vkQueueWaitIdle(capture) failed", rc);
         g_next_free_command_buffers(g_device, pool, 1, &cmd);
         g_next_destroy_command_pool(g_device, pool, nullptr);
         destroy_buffer_memory(buffer, memory);
         return false;
     }
-
-    bool sent =
-        send_external_frame_fd(width, height, stride, static_cast<uint32_t>(size), info.format, fd);
-    if (sent && verbose_logging()) {
-        std::fprintf(stderr, "[frame-capture] exported 4ch fd frame %ux%u fmt=%d size=%u sent=%d\n",
-                     width, height, info.format, static_cast<uint32_t>(size), 1);
-    } else if (!sent && g_export_fail_logs.fetch_add(1) < 40) {
-        std::fprintf(stderr, "[frame-capture] export fd failed: no active client for %ux%u\n",
-                     width, height);
-    }
-    close(fd);
 
     g_next_free_command_buffers(g_device, pool, 1, &cmd);
     g_next_destroy_command_pool(g_device, pool, nullptr);
-    if (sent) {
-        retain_exported_resource(buffer, memory);
-    } else {
-        destroy_buffer_memory(buffer, memory);
-    }
-    return sent;
-}
-
-static void try_capture_real_frame(VkQueue queue) {
-    if (g_pending_requests.load() == 0) {
-        return;
-    }
-
-    std::vector<std::pair<VkImage, ImageInfo>> candidates;
-    uint32_t family = g_default_queue_family;
     {
-        std::lock_guard<std::mutex> lock(g_mu);
-        auto qit = g_queue_families.find(queue);
-        if (qit != g_queue_families.end()) {
-            family = qit->second;
-        }
-        for (const auto &[image, info] : g_images) {
-            if (!(info.usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) ||
-                !is_supported_format(info.format) || !passes_capture_size_filter(info)) {
-                continue;
-            }
-            candidates.push_back({image, info});
-        }
+        std::lock_guard<std::mutex> lock(g_export_mu);
+        retain_exported_resource_locked(g_latest_frame.buffer, g_latest_frame.memory);
+        g_latest_frame = CapturedFrame{
+            buffer,
+            memory,
+            width,
+            height,
+            stride,
+            static_cast<uint32_t>(allocation_size),
+            g_frame_id.fetch_add(1),
+            swapchain_info.format,
+        };
     }
-
-    std::sort(candidates.begin(), candidates.end(), [](const auto &a, const auto &b) {
-        uint64_t aa = uint64_t(a.second.extent.width) * a.second.extent.height;
-        uint64_t bb = uint64_t(b.second.extent.width) * b.second.extent.height;
-        return aa > bb;
-    });
-
-    for (const auto &[image, info] : candidates) {
-        if (!try_acquire_request()) {
-            return;
-        }
-        if (verbose_logging() && g_copy_logs.fetch_add(1) < 20) {
-            std::fprintf(
-                stderr,
-                "[frame-capture] try copy candidate %ux%u fmt=%d usage=0x%x layout=%d family=%u\n",
-                info.extent.width, info.extent.height, info.format, info.usage, info.layout,
-                family);
-        }
-        if (!copy_image_to_export_fd(queue, family, image, info)) {
-            release_request();
-        }
+    if (verbose_logging()) {
+        std::fprintf(stderr, "[frame-capture] captured present frame %ux%u fmt=%d size=%u\n",
+                     width, height, swapchain_info.format, static_cast<uint32_t>(allocation_size));
     }
+    return true;
 }
 
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL
@@ -660,6 +626,11 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCreat
     if (result == VK_SUCCESS) {
         g_get_memory_props = reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties>(
             g_next_gipa(*instance, "vkGetPhysicalDeviceMemoryProperties"));
+        g_get_queue_family_props = reinterpret_cast<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(
+            g_next_gipa(*instance, "vkGetPhysicalDeviceQueueFamilyProperties"));
+        g_get_surface_capabilities =
+            reinterpret_cast<PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR>(
+                g_next_gipa(*instance, "vkGetPhysicalDeviceSurfaceCapabilitiesKHR"));
     }
     return result;
 }
@@ -680,7 +651,7 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice physic
     }
 
     g_next_gdpa = chain->u.pLayerInfo->pfnNextGetDeviceProcAddr;
-    auto next_create_device =
+    g_next_create_device =
         reinterpret_cast<PFN_vkCreateDevice>(g_next_gipa(nullptr, "vkCreateDevice"));
     chain->u.pLayerInfo = chain->u.pLayerInfo->pNext;
 
@@ -703,14 +674,26 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice physic
     patched_create_info.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
     patched_create_info.ppEnabledExtensionNames = extensions.data();
 
-    VkResult result = next_create_device(physical_device, &patched_create_info, allocator, device);
+    VkResult result =
+        g_next_create_device(physical_device, &patched_create_info, allocator, device);
     if (result == VK_SUCCESS) {
+        g_physical_device = physical_device;
         g_device = *device;
         if (create_info->queueCreateInfoCount > 0) {
             g_default_queue_family = create_info->pQueueCreateInfos[0].queueFamilyIndex;
         }
         if (g_get_memory_props) {
             g_get_memory_props(physical_device, &g_memory_props);
+        }
+        if (g_get_queue_family_props) {
+            uint32_t count = 0;
+            g_get_queue_family_props(physical_device, &count, nullptr);
+            std::vector<VkQueueFamilyProperties> props(count);
+            g_get_queue_family_props(physical_device, &count, props.data());
+            g_queue_family_flags.clear();
+            for (const auto &prop : props) {
+                g_queue_family_flags.push_back(prop.queueFlags);
+            }
         }
         load_device_functions(*device);
         start_request_server_once();
@@ -723,230 +706,106 @@ extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateDevice(VkPhysicalDevice physic
     return result;
 }
 
-extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateImage(VkDevice device,
-                                                        const VkImageCreateInfo *create_info,
-                                                        const VkAllocationCallbacks *allocator,
-                                                        VkImage *image) {
-    VkResult result = g_next_create_image(device, create_info, allocator, image);
-    if (result == VK_SUCCESS && image && create_info) {
-        ImageInfo info;
-        info.format = create_info->format;
-        info.extent = create_info->extent;
-        info.usage = create_info->usage;
-        info.layout = create_info->initialLayout;
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL
+vkCreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *create_info,
+                     const VkAllocationCallbacks *allocator, VkSwapchainKHR *swapchain) {
+    if (!g_next_create_swapchain_khr || !create_info) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+
+    VkSwapchainCreateInfoKHR patched_create_info = *create_info;
+    if (!(patched_create_info.imageUsage & VK_IMAGE_USAGE_TRANSFER_SRC_BIT)) {
+        if (g_get_surface_capabilities && g_physical_device != VK_NULL_HANDLE) {
+            VkSurfaceCapabilitiesKHR caps{};
+            VkResult caps_result =
+                g_get_surface_capabilities(g_physical_device, create_info->surface, &caps);
+            if (caps_result == VK_SUCCESS &&
+                !(caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT)) {
+                std::fprintf(stderr,
+                             "[frame-capture] swapchain surface does not support TRANSFER_SRC\n");
+                return VK_ERROR_FEATURE_NOT_PRESENT;
+            }
+        }
+        patched_create_info.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    }
+
+    VkResult result =
+        g_next_create_swapchain_khr(device, &patched_create_info, allocator, swapchain);
+    if (result == VK_SUCCESS && swapchain) {
         std::lock_guard<std::mutex> lock(g_mu);
-        g_images[*image] = info;
-        if (verbose_logging() && (info.usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) &&
-            is_supported_format(info.format) && info.extent.width >= 64 &&
-            info.extent.height >= 64) {
-            std::fprintf(
-                stderr, "[frame-capture] image candidate %ux%u format=%d usage=0x%x layout=%d\n",
-                info.extent.width, info.extent.height, info.format, info.usage, info.layout);
+        g_swapchains[*swapchain] =
+            SwapchainInfo{patched_create_info.imageFormat, patched_create_info.imageExtent, {}};
+        if (verbose_logging()) {
+            std::fprintf(stderr, "[frame-capture] swapchain %ux%u fmt=%d usage=0x%x\n",
+                         patched_create_info.imageExtent.width,
+                         patched_create_info.imageExtent.height, patched_create_info.imageFormat,
+                         patched_create_info.imageUsage);
         }
     }
     return result;
 }
 
-extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyImage(VkDevice device, VkImage image,
-                                                     const VkAllocationCallbacks *allocator) {
+extern "C" VKAPI_ATTR void VKAPI_CALL
+vkDestroySwapchainKHR(VkDevice device, VkSwapchainKHR swapchain,
+                      const VkAllocationCallbacks *allocator) {
     {
         std::lock_guard<std::mutex> lock(g_mu);
-        g_images.erase(image);
+        g_swapchains.erase(swapchain);
     }
-    g_next_destroy_image(device, image, allocator);
+    g_next_destroy_swapchain_khr(device, swapchain, allocator);
 }
 
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL
-vkCreateImageView(VkDevice device, const VkImageViewCreateInfo *create_info,
-                  const VkAllocationCallbacks *allocator, VkImageView *view) {
-    VkResult result = g_next_create_image_view(device, create_info, allocator, view);
-    if (result == VK_SUCCESS && create_info && view) {
+vkGetSwapchainImagesKHR(VkDevice device, VkSwapchainKHR swapchain, uint32_t *count,
+                        VkImage *images) {
+    VkResult result = g_next_get_swapchain_images_khr(device, swapchain, count, images);
+    if ((result == VK_SUCCESS || result == VK_INCOMPLETE) && images && count) {
         std::lock_guard<std::mutex> lock(g_mu);
-        g_image_views[*view] = ImageViewInfo{create_info->image};
+        auto it = g_swapchains.find(swapchain);
+        if (it != g_swapchains.end()) {
+            it->second.images.assign(images, images + *count);
+        }
     }
     return result;
-}
-
-extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyImageView(VkDevice device, VkImageView view,
-                                                         const VkAllocationCallbacks *allocator) {
-    {
-        std::lock_guard<std::mutex> lock(g_mu);
-        g_image_views.erase(view);
-    }
-    g_next_destroy_image_view(device, view, allocator);
-}
-
-extern "C" VKAPI_ATTR VkResult VKAPI_CALL
-vkCreateRenderPass(VkDevice device, const VkRenderPassCreateInfo *create_info,
-                   const VkAllocationCallbacks *allocator, VkRenderPass *render_pass) {
-    VkResult result = g_next_create_render_pass(device, create_info, allocator, render_pass);
-    if (result == VK_SUCCESS && create_info && render_pass) {
-        RenderPassInfo info;
-        for (uint32_t i = 0; i < create_info->attachmentCount; ++i) {
-            info.final_layouts.push_back(create_info->pAttachments[i].finalLayout);
-        }
-        std::lock_guard<std::mutex> lock(g_mu);
-        g_render_passes[*render_pass] = std::move(info);
-    }
-    return result;
-}
-
-extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyRenderPass(VkDevice device, VkRenderPass render_pass,
-                                                          const VkAllocationCallbacks *allocator) {
-    {
-        std::lock_guard<std::mutex> lock(g_mu);
-        g_render_passes.erase(render_pass);
-    }
-    g_next_destroy_render_pass(device, render_pass, allocator);
-}
-
-extern "C" VKAPI_ATTR VkResult VKAPI_CALL
-vkCreateFramebuffer(VkDevice device, const VkFramebufferCreateInfo *create_info,
-                    const VkAllocationCallbacks *allocator, VkFramebuffer *framebuffer) {
-    VkResult result = g_next_create_framebuffer(device, create_info, allocator, framebuffer);
-    if (result == VK_SUCCESS && create_info && framebuffer) {
-        FramebufferInfo info;
-        info.render_pass = create_info->renderPass;
-        for (uint32_t i = 0; i < create_info->attachmentCount; ++i) {
-            info.attachments.push_back(create_info->pAttachments[i]);
-        }
-        std::lock_guard<std::mutex> lock(g_mu);
-        g_framebuffers[*framebuffer] = std::move(info);
-    }
-    return result;
-}
-
-extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyFramebuffer(VkDevice device,
-                                                           VkFramebuffer framebuffer,
-                                                           const VkAllocationCallbacks *allocator) {
-    {
-        std::lock_guard<std::mutex> lock(g_mu);
-        g_framebuffers.erase(framebuffer);
-    }
-    g_next_destroy_framebuffer(device, framebuffer, allocator);
-}
-
-extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdPipelineBarrier(
-    VkCommandBuffer cmd, VkPipelineStageFlags src_stage, VkPipelineStageFlags dst_stage,
-    VkDependencyFlags deps, uint32_t mem_count, const VkMemoryBarrier *mem_barriers,
-    uint32_t buf_count, const VkBufferMemoryBarrier *buf_barriers, uint32_t img_count,
-    const VkImageMemoryBarrier *img_barriers) {
-    {
-        std::lock_guard<std::mutex> lock(g_mu);
-        for (uint32_t i = 0; i < img_count; ++i) {
-            auto it = g_images.find(img_barriers[i].image);
-            if (it != g_images.end()) {
-                it->second.layout = img_barriers[i].newLayout;
-            }
-        }
-    }
-    g_next_cmd_pipeline_barrier(cmd, src_stage, dst_stage, deps, mem_count, mem_barriers, buf_count,
-                                buf_barriers, img_count, img_barriers);
-}
-
-extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdBeginRenderPass(VkCommandBuffer cmd,
-                                                           const VkRenderPassBeginInfo *begin_info,
-                                                           VkSubpassContents contents) {
-    {
-        std::lock_guard<std::mutex> lock(g_mu);
-        g_cmds[cmd] = CmdState{begin_info->renderPass, begin_info->framebuffer};
-    }
-    g_next_cmd_begin_render_pass(cmd, begin_info, contents);
-}
-
-extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdEndRenderPass(VkCommandBuffer cmd) {
-    g_next_cmd_end_render_pass(cmd);
-    std::lock_guard<std::mutex> lock(g_mu);
-    auto cmd_it = g_cmds.find(cmd);
-    if (cmd_it == g_cmds.end()) {
-        return;
-    }
-    auto fb_it = g_framebuffers.find(cmd_it->second.framebuffer);
-    auto rp_it = g_render_passes.find(cmd_it->second.render_pass);
-    if (fb_it != g_framebuffers.end() && rp_it != g_render_passes.end()) {
-        const size_t n =
-            std::min(fb_it->second.attachments.size(), rp_it->second.final_layouts.size());
-        for (size_t i = 0; i < n; ++i) {
-            auto view_it = g_image_views.find(fb_it->second.attachments[i]);
-            if (view_it == g_image_views.end()) {
-                continue;
-            }
-            auto image_it = g_images.find(view_it->second.image);
-            if (image_it != g_images.end()) {
-                image_it->second.layout = rp_it->second.final_layouts[i];
-            }
-        }
-    }
-    g_cmds.erase(cmd_it);
 }
 
 extern "C" VKAPI_ATTR void VKAPI_CALL vkGetDeviceQueue(VkDevice device, uint32_t queue_family,
                                                        uint32_t queue_index, VkQueue *queue) {
     g_next_get_device_queue(device, queue_family, queue_index, queue);
     if (queue && *queue) {
+        VkQueueFlags flags = queue_family < g_queue_family_flags.size()
+                                 ? g_queue_family_flags[queue_family]
+                                 : 0;
         std::lock_guard<std::mutex> lock(g_mu);
-        g_queue_families[*queue] = queue_family;
+        g_queues[*queue] = QueueInfo{queue_family, flags};
     }
 }
 
-extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit(VkQueue queue, uint32_t submit_count,
-                                                        const VkSubmitInfo *submits,
-                                                        VkFence fence) {
-    if (verbose_logging()) {
-        std::fprintf(stderr, "[frame-capture] vkQueueSubmit count=%u\n", submit_count);
-    }
-    VkResult result = g_next_queue_submit(queue, submit_count, submits, fence);
-    if (result == VK_SUCCESS && g_next_queue_wait_idle) {
-        if (g_submit_count.fetch_add(1) < skip_submits()) {
-            return result;
-        }
-        g_next_queue_wait_idle(queue);
-        try_capture_real_frame(queue);
-    }
-    return result;
-}
-
-extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit2(VkQueue queue, uint32_t submit_count,
-                                                         const VkSubmitInfo2 *submits,
-                                                         VkFence fence) {
-    if (verbose_logging()) {
-        std::fprintf(stderr, "[frame-capture] vkQueueSubmit2 count=%u\n", submit_count);
-    }
-    if (!g_next_queue_submit2) {
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL
+vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *present_info) {
+    if (!g_next_queue_present_khr || !present_info) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
-    VkResult result = g_next_queue_submit2(queue, submit_count, submits, fence);
-    if (result == VK_SUCCESS && g_next_queue_wait_idle) {
-        if (g_submit_count.fetch_add(1) < skip_submits()) {
-            return result;
-        }
-        g_next_queue_wait_idle(queue);
-        try_capture_real_frame(queue);
-    }
-    return result;
-}
 
-extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit2KHR(VkQueue queue, uint32_t submit_count,
-                                                            const VkSubmitInfo2 *submits,
-                                                            VkFence fence) {
-    if (verbose_logging()) {
-        std::fprintf(stderr, "[frame-capture] vkQueueSubmit2KHR count=%u\n", submit_count);
+    bool captured = false;
+    if (present_info->swapchainCount == 1 && present_info->pSwapchains &&
+        present_info->pImageIndices) {
+        captured = capture_present_image(queue, present_info->pSwapchains[0],
+                                         present_info->pImageIndices[0],
+                                         present_info->pWaitSemaphores,
+                                         present_info->waitSemaphoreCount);
+    } else if (present_info->swapchainCount != 0) {
+        log_capture_failure("multi-swapchain present is unsupported");
     }
-    PFN_vkQueueSubmit2KHR next =
-        g_next_queue_submit2_khr ? g_next_queue_submit2_khr
-                                 : reinterpret_cast<PFN_vkQueueSubmit2KHR>(g_next_queue_submit2);
-    if (!next) {
-        return VK_ERROR_INITIALIZATION_FAILED;
+
+    if (!captured) {
+        return g_next_queue_present_khr(queue, present_info);
     }
-    VkResult result = next(queue, submit_count, submits, fence);
-    if (result == VK_SUCCESS && g_next_queue_wait_idle) {
-        if (g_submit_count.fetch_add(1) < skip_submits()) {
-            return result;
-        }
-        g_next_queue_wait_idle(queue);
-        try_capture_real_frame(queue);
-    }
-    return result;
+
+    VkPresentInfoKHR patched_present = *present_info;
+    patched_present.waitSemaphoreCount = 0;
+    patched_present.pWaitSemaphores = nullptr;
+    return g_next_queue_present_khr(queue, &patched_present);
 }
 
 extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice device,
@@ -954,50 +813,20 @@ extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice
     if (std::strcmp(name, "vkGetDeviceProcAddr") == 0) {
         return reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceProcAddr);
     }
-    if (std::strcmp(name, "vkCreateImage") == 0) {
-        return reinterpret_cast<PFN_vkVoidFunction>(vkCreateImage);
+    if (std::strcmp(name, "vkCreateSwapchainKHR") == 0) {
+        return reinterpret_cast<PFN_vkVoidFunction>(vkCreateSwapchainKHR);
     }
-    if (std::strcmp(name, "vkDestroyImage") == 0) {
-        return reinterpret_cast<PFN_vkVoidFunction>(vkDestroyImage);
+    if (std::strcmp(name, "vkDestroySwapchainKHR") == 0) {
+        return reinterpret_cast<PFN_vkVoidFunction>(vkDestroySwapchainKHR);
     }
-    if (std::strcmp(name, "vkCreateImageView") == 0) {
-        return reinterpret_cast<PFN_vkVoidFunction>(vkCreateImageView);
+    if (std::strcmp(name, "vkGetSwapchainImagesKHR") == 0) {
+        return reinterpret_cast<PFN_vkVoidFunction>(vkGetSwapchainImagesKHR);
     }
-    if (std::strcmp(name, "vkDestroyImageView") == 0) {
-        return reinterpret_cast<PFN_vkVoidFunction>(vkDestroyImageView);
-    }
-    if (std::strcmp(name, "vkCreateRenderPass") == 0) {
-        return reinterpret_cast<PFN_vkVoidFunction>(vkCreateRenderPass);
-    }
-    if (std::strcmp(name, "vkDestroyRenderPass") == 0) {
-        return reinterpret_cast<PFN_vkVoidFunction>(vkDestroyRenderPass);
-    }
-    if (std::strcmp(name, "vkCreateFramebuffer") == 0) {
-        return reinterpret_cast<PFN_vkVoidFunction>(vkCreateFramebuffer);
-    }
-    if (std::strcmp(name, "vkDestroyFramebuffer") == 0) {
-        return reinterpret_cast<PFN_vkVoidFunction>(vkDestroyFramebuffer);
-    }
-    if (std::strcmp(name, "vkCmdPipelineBarrier") == 0) {
-        return reinterpret_cast<PFN_vkVoidFunction>(vkCmdPipelineBarrier);
-    }
-    if (std::strcmp(name, "vkCmdBeginRenderPass") == 0) {
-        return reinterpret_cast<PFN_vkVoidFunction>(vkCmdBeginRenderPass);
-    }
-    if (std::strcmp(name, "vkCmdEndRenderPass") == 0) {
-        return reinterpret_cast<PFN_vkVoidFunction>(vkCmdEndRenderPass);
+    if (std::strcmp(name, "vkQueuePresentKHR") == 0) {
+        return reinterpret_cast<PFN_vkVoidFunction>(vkQueuePresentKHR);
     }
     if (std::strcmp(name, "vkGetDeviceQueue") == 0) {
         return reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceQueue);
-    }
-    if (std::strcmp(name, "vkQueueSubmit") == 0) {
-        return reinterpret_cast<PFN_vkVoidFunction>(vkQueueSubmit);
-    }
-    if (std::strcmp(name, "vkQueueSubmit2") == 0) {
-        return reinterpret_cast<PFN_vkVoidFunction>(vkQueueSubmit2);
-    }
-    if (std::strcmp(name, "vkQueueSubmit2KHR") == 0) {
-        return reinterpret_cast<PFN_vkVoidFunction>(vkQueueSubmit2KHR);
     }
     if (g_next_gdpa) {
         return g_next_gdpa(device, name);
@@ -1019,14 +848,17 @@ extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInst
     if (std::strcmp(name, "vkCreateDevice") == 0) {
         return reinterpret_cast<PFN_vkVoidFunction>(vkCreateDevice);
     }
-    if (std::strcmp(name, "vkQueueSubmit") == 0) {
-        return reinterpret_cast<PFN_vkVoidFunction>(vkQueueSubmit);
+    if (std::strcmp(name, "vkCreateSwapchainKHR") == 0) {
+        return reinterpret_cast<PFN_vkVoidFunction>(vkCreateSwapchainKHR);
     }
-    if (std::strcmp(name, "vkQueueSubmit2") == 0) {
-        return reinterpret_cast<PFN_vkVoidFunction>(vkQueueSubmit2);
+    if (std::strcmp(name, "vkDestroySwapchainKHR") == 0) {
+        return reinterpret_cast<PFN_vkVoidFunction>(vkDestroySwapchainKHR);
     }
-    if (std::strcmp(name, "vkQueueSubmit2KHR") == 0) {
-        return reinterpret_cast<PFN_vkVoidFunction>(vkQueueSubmit2KHR);
+    if (std::strcmp(name, "vkGetSwapchainImagesKHR") == 0) {
+        return reinterpret_cast<PFN_vkVoidFunction>(vkGetSwapchainImagesKHR);
+    }
+    if (std::strcmp(name, "vkQueuePresentKHR") == 0) {
+        return reinterpret_cast<PFN_vkVoidFunction>(vkQueuePresentKHR);
     }
     if (g_next_gipa) {
         return g_next_gipa(instance, name);

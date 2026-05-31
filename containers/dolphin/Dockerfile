@@ -9,10 +9,12 @@ ENV PATH=${DOLPHIN_PREFIX}/bin:${PATH}
 ENV LD_LIBRARY_PATH=${DOLPHIN_PREFIX}/lib:${VULKAN_LAYER_PREFIX}/lib:${LD_LIBRARY_PATH}
 ENV VK_LAYER_PATH=${VULKAN_LAYER_PREFIX}/share/vulkan/explicit_layer.d
 ENV VK_INSTANCE_LAYERS=VK_LAYER_WII_arena_frame_capture
+ENV DOLPHIN_DISPLAY=:99
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    locales wget xvfb x11vnc novnc websockify git gcc g++ make python3-dev cmake \
+    locales wget xvfb xserver-xorg-core x11-utils x11vnc novnc websockify \
+    git gcc g++ make python3-dev cmake \
     pkg-config libgl1-mesa-dev libx11-dev libxrandr-dev libxi-dev \
     libegl1-mesa-dev libvulkan-dev \
     libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev \
@@ -61,6 +63,8 @@ RUN --mount=type=bind,source=.,target=/workspace,rw=true \
     cmake --install /build-vulkan-layer
 
 FROM builder AS runtime
+COPY containers/dolphin/start-dolphin-gpu-x11.sh /opt/wii-arena/bin/start-dolphin-gpu-x11
+RUN chmod +x /opt/wii-arena/bin/start-dolphin-gpu-x11
 COPY configurations/dolphin/settings /dolphin-user
 
 FROM scratch AS dolphin-artifact

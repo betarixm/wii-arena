@@ -85,7 +85,7 @@ class CudaDriver(Driver):
         desc.type = 1  # CU_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD
         desc.handle.fd = file_descriptor
         desc.size = size
-        desc.flags = 1  # CUDA_EXTERNAL_MEMORY_DEDICATED
+        desc.flags = 0  # Vulkan buffer memory is not dedicated.
         ext = ctypes.c_void_p()
         return_code = self._runtime.lib.cuImportExternalMemory(
             ctypes.byref(ext), ctypes.byref(desc)

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import array
-import logging
 import mmap
 import os
 import socket
@@ -11,7 +10,7 @@ import time
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator, cast
+from typing import Iterator
 
 from docker import DockerClient
 from docker.models.containers import Container
@@ -21,26 +20,38 @@ from wii_arena.dolphin import (
     Dolphin,
     DolphinFrameBuffer,
     DolphinMemoryView,
+    receive_frame_buffer,
 )
 
-_LOGGER = logging.getLogger(__name__)
 
 _DOLPHIN_MEMORY_FD_SCAN_SCRIPT = (
     "import array, os, socket, sys\n"
     "sock_path = sys.argv[1]\n"
     "target_fd = None\n"
-    "for fd_name in os.listdir('/proc/1/fd'):\n"
-    "    path = f'/proc/1/fd/{fd_name}'\n"
+    "target_pid = None\n"
+    "for pid in os.listdir('/proc'):\n"
+    "    if not pid.isdigit():\n"
+    "        continue\n"
+    "    fd_dir = f'/proc/{pid}/fd'\n"
     "    try:\n"
-    "        target = os.readlink(path)\n"
+    "        fd_names = os.listdir(fd_dir)\n"
     "    except OSError:\n"
     "        continue\n"
-    "    if 'dolphin-emu.' in target:\n"
-    "        target_fd = int(fd_name)\n"
+    "    for fd_name in fd_names:\n"
+    "        path = f'{fd_dir}/{fd_name}'\n"
+    "        try:\n"
+    "            target = os.readlink(path)\n"
+    "        except OSError:\n"
+    "            continue\n"
+    "        if 'dolphin-emu.' in target:\n"
+    "            target_pid = int(pid)\n"
+    "            target_fd = int(fd_name)\n"
+    "            break\n"
+    "    if target_fd is not None:\n"
     "        break\n"
     "if target_fd is None:\n"
     "    raise SystemExit(11)\n"
-    "dup_fd = os.open(f'/proc/1/fd/{target_fd}', os.O_RDONLY)\n"
+    "dup_fd = os.open(f'/proc/{target_pid}/fd/{target_fd}', os.O_RDONLY)\n"
     "sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)\n"
     "try:\n"
     "    sock.connect(sock_path)\n"
@@ -69,35 +80,10 @@ class DockerDolphin(Dolphin, ABC):
         def memory_view(self) -> DolphinMemoryView:
             return self._memory_view
 
-        @contextmanager
-        def frame_buffer(self) -> Iterator[DolphinFrameBuffer]:
-            self._frame_socket.sendall(b"R")
-            fds = array.array("i")
-            msg, ancdata, _, _ = self._frame_socket.recvmsg(
-                4096, socket.CMSG_LEN(struct.calcsize("i"))
+        def frame_buffer(self) -> DolphinFrameBuffer:
+            return self._replace_frame_buffer(
+                receive_frame_buffer(self._frame_socket, self._driver)
             )
-            if not msg:
-                raise RuntimeError("Frame socket closed before sending a frame packet.")
-
-            fd: int | None = None
-            for cmsg_level, cmsg_type, cmsg_data in ancdata:
-                if cmsg_level == socket.SOL_SOCKET and cmsg_type == socket.SCM_RIGHTS:
-                    fds.frombytes(cmsg_data[: struct.calcsize("i")])
-                    if fds:
-                        fd = int(fds[0])
-                        break
-            if fd is None:
-                raise RuntimeError("Layer response did not include a frame fd.")
-
-            if len(msg) < 20:
-                os.close(fd)
-                raise RuntimeError(f"Frame header too short: {len(msg)}")
-
-            _, height, stride, size, _frame_id = struct.unpack("IIIII", msg[:20])
-            with self._driver.dlpack_from_file_descriptor(
-                fd, size, height, stride
-            ) as frame:
-                yield cast(DolphinFrameBuffer, frame)
 
         @property
         def control_socket(self) -> socket.socket:
@@ -139,6 +125,7 @@ class DockerDolphin(Dolphin, ABC):
             )
             frame_socket: socket.socket | None = None
             control_socket: socket.socket | None = None
+            session: DockerDolphin.Session | None = None
             memory_fd_socket_host = Path(socket_directory) / "memory_fd.sock"
             try:
                 container.reload()
@@ -149,10 +136,12 @@ class DockerDolphin(Dolphin, ABC):
                     )
 
                 frame_socket = _connect_socket(
-                    Path(socket_directory) / "frame_capture.sock"
+                    Path(socket_directory) / "frame_capture.sock",
+                    container=container,
                 )
                 control_socket = _connect_socket(
-                    Path(socket_directory) / "dolphin_control.sock"
+                    Path(socket_directory) / "dolphin_control.sock",
+                    container=container,
                 )
                 memory_view = _resolve_memory_view(
                     container=container,
@@ -160,13 +149,16 @@ class DockerDolphin(Dolphin, ABC):
                     host_socket_path=memory_fd_socket_host,
                     container_socket_path=f"{self._container_socket_directory}/memory_fd.sock",
                 )
-                yield DockerDolphin.Session(
+                session = DockerDolphin.Session(
                     memory_view=memory_view,
                     frame_socket=frame_socket,
                     control_socket=control_socket,
                     driver=self._driver,
                 )
+                yield session
             finally:
+                if session is not None:
+                    session.close_frame_buffer()
                 memory_fd_socket_host.unlink(missing_ok=True)
                 if frame_socket is not None:
                     frame_socket.sendall(b"Q")
@@ -213,9 +205,21 @@ def _resolve_memory_view(
     )
 
 
-def _connect_socket(socket_path: Path, timeout_sec: float = 30.0) -> socket.socket:
+def _connect_socket(
+    socket_path: Path,
+    timeout_sec: float = 30.0,
+    container: Container | None = None,
+) -> socket.socket:
     deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
+        if container is not None:
+            container.reload()
+            if container.status != "running":
+                logs = container.logs(tail=120).decode("utf-8", errors="replace")
+                raise RuntimeError(
+                    f"Docker container exited early while waiting for {socket_path} "
+                    f"(status={container.status}).\n{logs}"
+                )
         if socket_path.exists():
             candidate = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             if candidate.connect_ex(str(socket_path)) == 0:
