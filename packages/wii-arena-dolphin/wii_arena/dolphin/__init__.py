@@ -124,18 +124,18 @@ class Dolphin(SupportsSession):
                 button_mask = 0
                 for j, btn in enumerate(
                     [
-                        "A",
-                        "B",
-                        "X",
-                        "Y",
-                        "Z",
-                        "Start",
-                        "Up",
-                        "Down",
-                        "Left",
-                        "Right",
-                        "L",
-                        "R",
+                        "a",
+                        "b",
+                        "x",
+                        "y",
+                        "z",
+                        "start",
+                        "up",
+                        "down",
+                        "left",
+                        "right",
+                        "l",
+                        "r",
                     ]
                 ):
                     if getattr(agent_action, btn):
