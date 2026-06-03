@@ -1,0 +1,16 @@
+.artifacts
+.git/*
+!.git/modules/
+.git/modules/*
+!.git/modules/containers/
+.git/modules/containers/*
+!.git/modules/containers/dolphin/
+.git/modules/containers/dolphin/*
+!.git/modules/containers/dolphin/dolphin/
+!.git/modules/containers/dolphin/dolphin/**
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+*.iso
+*.zip

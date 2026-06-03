@@ -6,6 +6,8 @@ from docker.models.images import Image
 from wii_arena.cuda_driver import CudaDriver
 from wii_arena.dolphin_docker import DockerDolphin
 
+_XORG_CONFIGURATION_FILE = Path(__file__).parent / "xorg.conf"
+
 
 class NvidiaDockerDolphin(DockerDolphin):
     def __init__(
@@ -13,7 +15,7 @@ class NvidiaDockerDolphin(DockerDolphin):
         docker_image: Image,
         wii_iso_file: Path,
         docker_client: DockerClient | None = None,
-        container_socket_directory: str = "/tmp",
+        container_socket_directory: str = "/run/wii-arena",
     ):
         super().__init__(
             docker_image=docker_image,
@@ -43,16 +45,25 @@ class NvidiaDockerDolphin(DockerDolphin):
                     "mode": "rw",
                 },
                 str(dev_shm_directory): {"bind": "/dev/shm", "mode": "rw"},
+                str(_XORG_CONFIGURATION_FILE): {
+                    "bind": "/opt/wii-arena/etc/xorg.conf",
+                    "mode": "ro",
+                },
             },
             environment={
                 "NVIDIA_VISIBLE_DEVICES": "all",
                 "NVIDIA_DRIVER_CAPABILITIES": "all",
                 "FRAME_CAPTURE_SOCKET": self._container_frame_socket_file,
+                "CONTROL_SOCKET": self._container_control_socket_file,
+                "DOLPHIN_XORG_CONF": "/opt/wii-arena/etc/xorg.conf",
             },
             command=[
+                "/opt/wii-arena/bin/entrypoint",
                 "dolphin-emu-nogui",
                 "--exec=/game.iso",
-                "--platform=headless",
+                "--platform=x11",
                 "--video_backend=Vulkan",
+                "--user=/dolphin-user",
+                "--script=/scripts/control.py"
             ],
         )

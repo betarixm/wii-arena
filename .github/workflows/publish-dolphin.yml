@@ -7,6 +7,8 @@ on:
     paths:
       - containers/dolphin/**
       - packages/vulkan-frame-layer/**
+      - configurations/dolphin/**
+      - .dockerignore
       - .github/workflows/publish-dolphin.yml
   workflow_dispatch:
 
@@ -58,12 +60,6 @@ jobs:
           file: containers/dolphin/Dockerfile
           target: vulkan-layer-artifact
           outputs: type=local,dest=./dist/vulkan-layer
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: containers/dolphin/Dockerfile
-          target: full-artifact
-          outputs: type=local,dest=./dist/full
       - uses: actions/upload-artifact@v4
         with:
           name: wii-arena-dolphin-linux-x86_64
@@ -72,7 +68,3 @@ jobs:
         with:
           name: wii-arena-vulkan-layer-linux-x86_64
           path: ./dist/vulkan-layer/wii-arena-vulkan-layer/
-      - uses: actions/upload-artifact@v4
-        with:
-          name: wii-arena-dolphin-full-linux-x86_64
-          path: ./dist/full/

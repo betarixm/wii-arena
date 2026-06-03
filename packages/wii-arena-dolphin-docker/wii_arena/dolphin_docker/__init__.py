@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import array
-import logging
 import mmap
 import os
 import socket
@@ -11,7 +10,7 @@ import time
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator, cast
+from typing import Iterator
 
 from docker import DockerClient
 from docker.models.containers import Container
@@ -19,38 +18,48 @@ from docker.models.images import Image
 from wii_arena.dlpack import Driver
 from wii_arena.dolphin import (
     Dolphin,
-    DolphinAction,
     DolphinFrameBuffer,
+    DolphinFrameBufferUnavailable,
     DolphinMemoryView,
 )
 
-_LOGGER = logging.getLogger(__name__)
-
-_DOLPHIN_MEMORY_FD_SCAN_SCRIPT = (
-    "import array, os, socket, sys\n"
-    "sock_path = sys.argv[1]\n"
-    "target_fd = None\n"
-    "for fd_name in os.listdir('/proc/1/fd'):\n"
-    "    path = f'/proc/1/fd/{fd_name}'\n"
-    "    try:\n"
-    "        target = os.readlink(path)\n"
-    "    except OSError:\n"
-    "        continue\n"
-    "    if 'dolphin-emu.' in target:\n"
-    "        target_fd = int(fd_name)\n"
-    "        break\n"
-    "if target_fd is None:\n"
-    "    raise SystemExit(11)\n"
-    "dup_fd = os.open(f'/proc/1/fd/{target_fd}', os.O_RDONLY)\n"
-    "sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)\n"
-    "try:\n"
-    "    sock.connect(sock_path)\n"
-    "    payload = array.array('i', [dup_fd])\n"
-    "    sock.sendmsg([b'M'], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, payload)])\n"
-    "finally:\n"
-    "    sock.close()\n"
-    "    os.close(dup_fd)\n"
-)
+_DOLPHIN_MEMORY_FD_SCAN_SCRIPT = """\
+import array, os, socket, sys
+sock_path = sys.argv[1]
+target_fd = None
+target_pid = None
+for pid in os.listdir('/proc'):
+    if not pid.isdigit():
+        continue
+    fd_dir = f'/proc/{pid}/fd'
+    try:
+        fd_names = os.listdir(fd_dir)
+    except OSError:
+        continue
+    for fd_name in fd_names:
+        path = f'{fd_dir}/{fd_name}'
+        try:
+            target = os.readlink(path)
+        except OSError:
+            continue
+        if 'dolphin-emu.' in target:
+            target_pid = int(pid)
+            target_fd = int(fd_name)
+            break
+    if target_fd is not None:
+        break
+if target_fd is None:
+    raise SystemExit(11)
+dup_fd = os.open(f'/proc/{target_pid}/fd/{target_fd}', os.O_RDONLY)
+sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+try:
+    sock.connect(sock_path)
+    payload = array.array('i', [dup_fd])
+    sock.sendmsg([b'M'], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, payload)])
+finally:
+    sock.close()
+    os.close(dup_fd)
+"""
 
 
 class DockerDolphin(Dolphin, ABC):
@@ -59,15 +68,13 @@ class DockerDolphin(Dolphin, ABC):
             self,
             memory_view: DolphinMemoryView,
             frame_socket: socket.socket,
+            control_socket: socket.socket,
             driver: Driver,
         ):
             self._memory_view = memory_view
             self._frame_socket = frame_socket
+            self._control_socket = control_socket
             self._driver = driver
-
-        def execute(self, action: DolphinAction) -> None:
-            _LOGGER.debug("execute called with action=%s (noop)", action)
-            return None
 
         def memory_view(self) -> DolphinMemoryView:
             return self._memory_view
@@ -81,6 +88,11 @@ class DockerDolphin(Dolphin, ABC):
             )
             if not msg:
                 raise RuntimeError("Frame socket closed before sending a frame packet.")
+            if msg[:1] == b"N":
+                status = msg[1:].decode("utf-8", errors="replace")
+                raise DolphinFrameBufferUnavailable(
+                    status or "Layer does not have a captured frame yet."
+                )
 
             fd: int | None = None
             for cmsg_level, cmsg_type, cmsg_data in ancdata:
@@ -92,15 +104,25 @@ class DockerDolphin(Dolphin, ABC):
             if fd is None:
                 raise RuntimeError("Layer response did not include a frame fd.")
 
-            if len(msg) < 20:
+            if len(msg) < 24:
                 os.close(fd)
                 raise RuntimeError(f"Frame header too short: {len(msg)}")
 
-            _, height, stride, size, _frame_id = struct.unpack("IIIII", msg[:20])
+            width, height, stride, size, frame_id, frame_format = struct.unpack(
+                "IIIIII", msg[:24]
+            )
             with self._driver.dlpack_from_file_descriptor(
                 fd, size, height, stride
             ) as frame:
-                yield cast(DolphinFrameBuffer, frame)
+                yield DolphinFrameBuffer(
+                    frame,
+                    width=width,
+                    height=height,
+                    stride=stride,
+                    size=size,
+                    frame_id=frame_id,
+                    frame_format=frame_format,
+                )
 
     def __init__(
         self,
@@ -108,7 +130,7 @@ class DockerDolphin(Dolphin, ABC):
         wii_iso_file: Path,
         driver: Driver,
         docker_client: DockerClient | None = None,
-        container_socket_directory: str = "/tmp",
+        container_socket_directory: str = "/run/wii-arena",
     ):
         self._docker_client = (
             docker_client if docker_client is not None else DockerClient.from_env()
@@ -122,6 +144,10 @@ class DockerDolphin(Dolphin, ABC):
     def _container_frame_socket_file(self) -> str:
         return f"{self._container_socket_directory}/frame_capture.sock"
 
+    @property
+    def _container_control_socket_file(self) -> str:
+        return f"{self._container_socket_directory}/dolphin_control.sock"
+
     @contextmanager
     def session(self) -> Iterator[DockerDolphin.Session]:
         with (
@@ -133,6 +159,8 @@ class DockerDolphin(Dolphin, ABC):
                 dev_shm_directory=Path(dev_shm_directory),
             )
             frame_socket: socket.socket | None = None
+            control_socket: socket.socket | None = None
+
             memory_fd_socket_host = Path(socket_directory) / "memory_fd.sock"
             try:
                 container.reload()
@@ -142,9 +170,13 @@ class DockerDolphin(Dolphin, ABC):
                         f"Docker container exited early (status={container.status}).\n{logs}"
                     )
 
-                frame_socket = _connect_frame_socket(
+                frame_socket = _connect_socket(
                     Path(socket_directory) / "frame_capture.sock"
                 )
+                control_socket = _connect_socket(
+                    Path(socket_directory) / "dolphin_control.sock"
+                )
+
                 memory_view = _resolve_memory_view(
                     container=container,
                     dev_shm_directory=Path(dev_shm_directory),
@@ -154,6 +186,7 @@ class DockerDolphin(Dolphin, ABC):
                 yield DockerDolphin.Session(
                     memory_view=memory_view,
                     frame_socket=frame_socket,
+                    control_socket=control_socket,
                     driver=self._driver,
                 )
             finally:
@@ -161,6 +194,9 @@ class DockerDolphin(Dolphin, ABC):
                 if frame_socket is not None:
                     frame_socket.sendall(b"Q")
                     frame_socket.close()
+                if control_socket is not None:
+                    control_socket.sendall(b"Q")
+                    control_socket.close()
                 container.remove(force=True)
 
     @abstractmethod
@@ -200,9 +236,7 @@ def _resolve_memory_view(
     )
 
 
-def _connect_frame_socket(
-    socket_path: Path, timeout_sec: float = 30.0
-) -> socket.socket:
+def _connect_socket(socket_path: Path, timeout_sec: float = 30.0) -> socket.socket:
     deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
         if socket_path.exists():
