@@ -86,7 +86,7 @@ class DolphinAgentAction(BaseModel):
 
 
 DolphinAgentIndex = NewType("DolphinAgentIndex", int)
-DolphinAction = list[tuple[DolphinAgentIndex, DolphinAgentAction]]
+DolphinAction = dict[DolphinAgentIndex, DolphinAgentAction]
 
 
 class Dolphin(SupportsSession):
@@ -114,7 +114,7 @@ class Dolphin(SupportsSession):
             format_string = "<B" + ("H6f" * len(action))
 
             data: list[int | float] = [num_agents]
-            for agent_idx, agent_action in action:
+            for agent_idx, agent_action in action.items():
                 agent_idx_int = int(agent_idx)
                 if not 1 <= agent_idx_int <= 4:
                     raise ValueError(
