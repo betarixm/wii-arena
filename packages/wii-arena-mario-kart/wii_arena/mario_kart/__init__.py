@@ -1,5 +1,5 @@
-from contextlib import contextmanager
 import logging
+from contextlib import contextmanager
 from typing import Iterator
 
 from wii_arena.core.environment.types import Terminated, Truncated
@@ -7,6 +7,9 @@ from wii_arena.dolphin import (
     Dolphin,
     DolphinScenario,
 )
+
+from .navigation import navigate
+from .options import MarioKartWiiOptions
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,8 +26,9 @@ class MarioKartWiiScenario(DolphinScenario):
             # TODO: implement this method to determine if the Mario Kart Wii scenario has been truncated
             return Truncated(False)
 
-    def __init__(self, dolphin: Dolphin):
+    def __init__(self, dolphin: Dolphin, options: MarioKartWiiOptions | None = None):
         self._dolphin = dolphin
+        self._options = options if options is not None else MarioKartWiiOptions()
         _LOGGER.debug(
             "Initialized MarioKartWiiScenario with dolphin=%s",
             type(dolphin).__name__,
@@ -34,7 +38,7 @@ class MarioKartWiiScenario(DolphinScenario):
     def session(self) -> Iterator[MarioKartWiiScenario.Session]:
         _LOGGER.info("Opening MarioKartWiiScenario session")
         with self._dolphin.session() as dolphin_session:
-            # TODO: e.g. navigating the Dolphin emulator into a race in Mario Kart Wii.
+            navigate(dolphin_session, self._options)
             scenario_session = MarioKartWiiScenario.Session(
                 dolphin_session=dolphin_session
             )
