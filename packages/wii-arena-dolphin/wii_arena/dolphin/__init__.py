@@ -116,9 +116,8 @@ class Dolphin(SupportsSession):
             )
             for _ in range(press_frames):
                 self.execute(action)
-            release: DolphinAction = {index: DolphinAgentAction() for index in action}
             for _ in range(idle_frames):
-                self.execute(release)
+                self.execute({})
 
         @abstractmethod
         def memory_view(self) -> DolphinMemoryView: ...
