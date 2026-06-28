@@ -282,12 +282,13 @@ class DolphinEnvironment(
                 session.frame_stack.close()
 
 
-class DolphinArena[Action](
+class DolphinArena(
     Arena[
         DolphinFrameBuffer,
         tuple[DolphinMemoryView, DolphinFrameBuffer],
-        Action,
+        DolphinAgentAction,
         None,
+        DolphinAgentIndex,
     ]
 ):
     def _event_from_observation(
