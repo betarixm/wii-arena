@@ -39,7 +39,7 @@ def navigate(session: Dolphin.Session, options: MarioKartWiiOptions) -> None:
     enter_main_menu(session, options)
 
     if options.num_agents == 1:
-        session.click({_P1: _A}, idle_frames=500)
+        session.click({_P1: _A}, idle_frames=300)
         session.click({_P1: _DOWN}, idle_frames=10)
         session.click({_P1: _DOWN}, idle_frames=10)
         session.click(
@@ -105,14 +105,14 @@ def navigate(session: Dolphin.Session, options: MarioKartWiiOptions) -> None:
 
     select_course(session, options)
 
-    session.click({}, idle_frames=1250)
+    session.click({}, idle_frames=600)
 
 
 def enter_main_menu(session: Dolphin.Session, options: MarioKartWiiOptions) -> None:
     all_a = {
         DolphinAgentIndex(player): _A for player in range(1, options.num_agents + 1)
     }
-    session.click({}, idle_frames=500)
+    session.click({}, idle_frames=800)
     session.click(all_a, idle_frames=500)
 
     for _ in range(7):
