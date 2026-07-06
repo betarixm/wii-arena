@@ -26,15 +26,12 @@ while True:
         payload = data[1:]
         num_agents_in_packet = payload[0]
         agent_data = payload[1:]
-        for count in range(num_agents_in_packet):
-            offset = count * AGENT_SIZE
+        for agent_index in range(num_agents_in_packet):
+            offset = agent_index * AGENT_SIZE
 
-            packed_header, sx, sy, csx, csy, tl, tr = struct.unpack_from(
+            btn_mask, sx, sy, csx, csy, tl, tr = struct.unpack_from(
                 AGENT_STRUCT, agent_data, offset
             )
-
-            agent_index = (packed_header >> 12) & 0b11
-            btn_mask = packed_header & 0xFFF
 
             inputs = {
                 btn: bool(btn_mask & (1 << j))
