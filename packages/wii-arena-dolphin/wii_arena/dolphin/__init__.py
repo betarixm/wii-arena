@@ -85,8 +85,10 @@ class DolphinAgentAction(BaseModel):
     trigger_right: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
-DolphinAgentIndex = NewType("DolphinAgentIndex", int)
-DolphinAction = dict[DolphinAgentIndex, DolphinAgentAction]
+class DolphinNoOpAgentAction(DolphinAgentAction): ...
+
+
+DolphinAction = list[DolphinAgentAction]
 
 
 class Dolphin(SupportsSession):
@@ -116,8 +118,9 @@ class Dolphin(SupportsSession):
             )
             for _ in range(press_frames):
                 self.execute(action)
+            idle_action = [DolphinNoOpAgentAction() for _ in action]
             for _ in range(idle_frames):
-                self.execute({})
+                self.execute(idle_action)
 
         @abstractmethod
         def memory_view(self) -> DolphinMemoryView: ...
@@ -132,13 +135,7 @@ class Dolphin(SupportsSession):
             format_string = "<B" + ("H6f" * len(action))
 
             data: list[int | float] = [num_agents]
-            for agent_idx, agent_action in action.items():
-                agent_idx_int = int(agent_idx)
-                if not 1 <= agent_idx_int <= 4:
-                    raise ValueError(
-                        f"DolphinAgentIndex must be between 1 and 4, got {agent_idx_int}."
-                    )
-
+            for agent_action in action:
                 button_mask = 0
                 for j, btn in enumerate(
                     [
@@ -158,8 +155,7 @@ class Dolphin(SupportsSession):
                 ):
                     if getattr(agent_action, btn):
                         button_mask |= 1 << j
-                agent_header = ((agent_idx_int - 1) << 12) | (button_mask & 0xFFF)
-                data.append(agent_header)
+                data.append(button_mask)
                 data.extend(
                     [
                         agent_action.stick_x,
@@ -288,7 +284,6 @@ class DolphinArena(
         tuple[DolphinMemoryView, DolphinFrameBuffer],
         DolphinAgentAction,
         None,
-        DolphinAgentIndex,
     ]
 ):
     def _event_from_observation(
