@@ -127,13 +127,12 @@ class Dolphin(SupportsSession):
 
         @staticmethod
         def _pack_action(action: DolphinAction) -> bytes:
-            num_controllers = len(action)
-            if num_controllers > 4:
-                raise ValueError("DolphinAction supports at most 4 controllers.")
+            if len(action) != 4:
+                raise ValueError("DolphinAction requires inputs for all 4 controllers.")
 
-            format_string = "<B" + ("H6f" * len(action))
+            format_string = "<" + ("H6f" * len(action))
 
-            data: list[int | float] = [num_controllers]
+            data: list[int | float] = []
             for controller_input in action:
                 button_mask = 0
                 for j, btn in enumerate(
@@ -219,7 +218,9 @@ class DolphinEnvironment(
             frame_buffer: DolphinFrameBuffer | None = None
             last_unavailable: DolphinFrameBufferUnavailable | None = None
             for _ in range(_INITIAL_FRAME_ATTEMPTS):
-                self._dolphin_scenario.dolphin.execute(DolphinAction())
+                self._dolphin_scenario.dolphin.execute(
+                    [DolphinNoOpGCControllerInput() for _ in range(4)]
+                )
                 try:
                     frame_buffer = self._refresh_frame_buffer()
                     break

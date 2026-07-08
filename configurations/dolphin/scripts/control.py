@@ -7,6 +7,7 @@ from dolphin import controller, event
 
 CONTROLLER_STRUCT = "<H6f"
 CONTROLLER_SIZE = struct.calcsize(CONTROLLER_STRUCT)
+NUM_CONTROLLERS = 4
 
 # Make sure to initialize dolphin before socket listening
 await event.frameadvance()  # noqa: F704
@@ -23,10 +24,8 @@ while True:
     data = conn.recv(1024)
 
     if data.startswith(b"E"):
-        payload = data[1:]
-        num_controllers_in_packet = payload[0]
-        controller_data = payload[1:]
-        for controller_index in range(num_controllers_in_packet):
+        controller_data = data[1:]
+        for controller_index in range(NUM_CONTROLLERS):
             offset = controller_index * CONTROLLER_SIZE
 
             button_mask, sx, sy, csx, csy, tl, tr = struct.unpack_from(
