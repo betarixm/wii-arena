@@ -102,25 +102,6 @@ class Dolphin(SupportsSession):
                     f"Unexpected response from Dolphin control socket: {self._control_socket.recv(1024)}"
                 )
 
-        def click(
-            self,
-            action: DolphinAction,
-            *,
-            idle_frames: int = 250,
-            press_frames: int = 3,
-        ) -> None:
-            _LOGGER.debug(
-                "Clicking action=%s for %d frame(s), idling for %d frame(s)",
-                action,
-                press_frames,
-                idle_frames,
-            )
-            for _ in range(press_frames):
-                self.execute(action)
-            idle_action = [DolphinNoOpGCControllerInput() for _ in action]
-            for _ in range(idle_frames):
-                self.execute(idle_action)
-
         @abstractmethod
         def memory_view(self) -> DolphinMemoryView: ...
         def frame_buffer(self) -> AbstractContextManager[DolphinFrameBuffer]: ...
