@@ -5,8 +5,8 @@ import struct
 
 from dolphin import controller, event
 
-AGENT_STRUCT = "<H6f"
-AGENT_SIZE = struct.calcsize(AGENT_STRUCT)
+CONTROLLER_STRUCT = "<H6f"
+CONTROLLER_SIZE = struct.calcsize(CONTROLLER_STRUCT)
 
 # Make sure to initialize dolphin before socket listening
 await event.frameadvance()  # noqa: F704
@@ -24,13 +24,13 @@ while True:
 
     if data.startswith(b"E"):
         payload = data[1:]
-        num_agents_in_packet = payload[0]
-        agent_data = payload[1:]
-        for agent_index in range(num_agents_in_packet):
-            offset = agent_index * AGENT_SIZE
+        num_controllers_in_packet = payload[0]
+        controller_data = payload[1:]
+        for controller_index in range(num_controllers_in_packet):
+            offset = controller_index * CONTROLLER_SIZE
 
             button_mask, sx, sy, csx, csy, tl, tr = struct.unpack_from(
-                AGENT_STRUCT, agent_data, offset
+                CONTROLLER_STRUCT, controller_data, offset
             )
 
             inputs = {
@@ -63,7 +63,7 @@ while True:
                 }
             )
 
-            controller.set_gc_buttons(agent_index, inputs)
+            controller.set_gc_buttons(controller_index, inputs)
 
         await event.frameadvance()  # noqa: F704
         conn.sendall(b"D")

@@ -63,7 +63,7 @@ class DolphinFrameBuffer(SupportsDlpack):
 class DolphinFrameBufferUnavailable(RuntimeError): ...
 
 
-class DolphinAgentAction(BaseModel):
+class DolphinGCControllerInput(BaseModel):
     a: bool = False
     b: bool = False
     x: bool = False
@@ -84,10 +84,10 @@ class DolphinAgentAction(BaseModel):
     trigger_right: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
-class DolphinNoOpAgentAction(DolphinAgentAction): ...
+class DolphinNoOpGCControllerInput(DolphinGCControllerInput): ...
 
 
-DolphinAction = list[DolphinAgentAction]
+DolphinAction = list[DolphinGCControllerInput]
 
 
 class Dolphin(SupportsSession):
@@ -117,7 +117,7 @@ class Dolphin(SupportsSession):
             )
             for _ in range(press_frames):
                 self.execute(action)
-            idle_action = [DolphinNoOpAgentAction() for _ in action]
+            idle_action = [DolphinNoOpGCControllerInput() for _ in action]
             for _ in range(idle_frames):
                 self.execute(idle_action)
 
@@ -127,14 +127,14 @@ class Dolphin(SupportsSession):
 
         @staticmethod
         def _pack_action(action: DolphinAction) -> bytes:
-            num_agents = len(action)
-            if num_agents > 4:
-                raise ValueError("DolphinAction supports at most 4 agents.")
+            num_controllers = len(action)
+            if num_controllers > 4:
+                raise ValueError("DolphinAction supports at most 4 controllers.")
 
             format_string = "<B" + ("H6f" * len(action))
 
-            data: list[int | float] = [num_agents]
-            for agent_action in action:
+            data: list[int | float] = [num_controllers]
+            for controller_input in action:
                 button_mask = 0
                 for j, btn in enumerate(
                     [
@@ -152,17 +152,17 @@ class Dolphin(SupportsSession):
                         "r",
                     ]
                 ):
-                    if getattr(agent_action, btn):
+                    if getattr(controller_input, btn):
                         button_mask |= 1 << j
                 data.append(button_mask)
                 data.extend(
                     [
-                        agent_action.stick_x,
-                        agent_action.stick_y,
-                        agent_action.c_stick_x,
-                        agent_action.c_stick_y,
-                        agent_action.trigger_left,
-                        agent_action.trigger_right,
+                        controller_input.stick_x,
+                        controller_input.stick_y,
+                        controller_input.c_stick_x,
+                        controller_input.c_stick_y,
+                        controller_input.trigger_left,
+                        controller_input.trigger_right,
                     ]
                 )
 
