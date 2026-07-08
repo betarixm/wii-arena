@@ -29,12 +29,12 @@ while True:
         for agent_index in range(num_agents_in_packet):
             offset = agent_index * AGENT_SIZE
 
-            btn_mask, sx, sy, csx, csy, tl, tr = struct.unpack_from(
+            button_mask, sx, sy, csx, csy, tl, tr = struct.unpack_from(
                 AGENT_STRUCT, agent_data, offset
             )
 
             inputs = {
-                btn: bool(btn_mask & (1 << j))
+                btn: bool(button_mask & (1 << j))
                 for j, btn in enumerate(
                     [
                         "A",
