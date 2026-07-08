@@ -9,7 +9,6 @@ from types import CapsuleType
 from typing import Iterator, NewType
 
 from pydantic import BaseModel, Field
-from wii_arena.core.arena.protocols import Arena
 from wii_arena.core.environment.protocols import Environment
 from wii_arena.core.environment.types import Terminated, Truncated
 from wii_arena.core.session.protocols import SupportsSession
@@ -276,19 +275,3 @@ class DolphinEnvironment(
             finally:
                 _LOGGER.info("Closing DolphinEnvironment session")
                 session.frame_stack.close()
-
-
-class DolphinArena(
-    Arena[
-        DolphinFrameBuffer,
-        tuple[DolphinMemoryView, DolphinFrameBuffer],
-        DolphinAgentAction,
-        None,
-    ]
-):
-    def _event_from_observation(
-        self,
-        observation: tuple[DolphinMemoryView, DolphinFrameBuffer],
-        context: None,
-    ) -> DolphinFrameBuffer:
-        return observation[1]
