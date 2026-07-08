@@ -8,6 +8,7 @@ from dolphin import controller, event
 CONTROLLER_STRUCT = "<H6f"
 CONTROLLER_SIZE = struct.calcsize(CONTROLLER_STRUCT)
 NUM_CONTROLLERS = 4
+OVERRIDE_FLAG = 1 << 15
 
 # Make sure to initialize dolphin before socket listening
 await event.frameadvance()  # noqa: F704
@@ -31,6 +32,9 @@ while True:
             button_mask, sx, sy, csx, csy, tl, tr = struct.unpack_from(
                 CONTROLLER_STRUCT, controller_data, offset
             )
+
+            if not button_mask & OVERRIDE_FLAG:
+                continue
 
             inputs = {
                 btn: bool(button_mask & (1 << j))

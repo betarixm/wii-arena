@@ -84,10 +84,12 @@ class DolphinGCControllerInput(BaseModel):
     trigger_right: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
-class DolphinNoOpGCControllerInput(DolphinGCControllerInput): ...
+class DolphinNoOpControllerInput(BaseModel): ...
 
 
-DolphinAction = list[DolphinGCControllerInput]
+DolphinAction = list[DolphinGCControllerInput | DolphinNoOpControllerInput]
+
+_OVERRIDE_FLAG = 1 << 15
 
 
 class Dolphin(SupportsSession):
@@ -115,6 +117,11 @@ class Dolphin(SupportsSession):
 
             data: list[int | float] = []
             for controller_input in action:
+                if isinstance(controller_input, DolphinNoOpControllerInput):
+                    data.append(0)
+                    data.extend([0.0] * 6)
+                    continue
+
                 button_mask = 0
                 for j, btn in enumerate(
                     [
@@ -134,7 +141,7 @@ class Dolphin(SupportsSession):
                 ):
                     if getattr(controller_input, btn):
                         button_mask |= 1 << j
-                data.append(button_mask)
+                data.append(_OVERRIDE_FLAG | button_mask)
                 data.extend(
                     [
                         controller_input.stick_x,
@@ -200,7 +207,7 @@ class DolphinEnvironment(
             last_unavailable: DolphinFrameBufferUnavailable | None = None
             for _ in range(_INITIAL_FRAME_ATTEMPTS):
                 self._dolphin_scenario.dolphin.execute(
-                    [DolphinNoOpGCControllerInput() for _ in range(4)]
+                    [DolphinNoOpControllerInput() for _ in range(4)]
                 )
                 try:
                     frame_buffer = self._refresh_frame_buffer()
