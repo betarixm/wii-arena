@@ -63,7 +63,7 @@ class DolphinFrameBuffer(SupportsDlpack):
 class DolphinFrameBufferUnavailable(RuntimeError): ...
 
 
-class DolphinGCControllerInput(BaseModel):
+class DolphinGameCubeControllerInput(BaseModel):
     a: bool = False
     b: bool = False
     x: bool = False
@@ -84,10 +84,10 @@ class DolphinGCControllerInput(BaseModel):
     trigger_right: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
-class DolphinNoOpControllerInput(BaseModel): ...
+class DolphinGameCubeControllerNoOp(BaseModel): ...
 
 
-DolphinAction = list[DolphinGCControllerInput | DolphinNoOpControllerInput]
+DolphinAction = list[DolphinGameCubeControllerInput | DolphinGameCubeControllerNoOp]
 
 _OVERRIDE_FLAG = 1 << 15
 
@@ -117,7 +117,7 @@ class Dolphin(SupportsSession):
 
             data: list[int | float] = []
             for controller_input in action:
-                if isinstance(controller_input, DolphinNoOpControllerInput):
+                if isinstance(controller_input, DolphinGameCubeControllerNoOp):
                     data.append(0)
                     data.extend([0.0] * 6)
                     continue
@@ -207,7 +207,12 @@ class DolphinEnvironment(
             last_unavailable: DolphinFrameBufferUnavailable | None = None
             for _ in range(_INITIAL_FRAME_ATTEMPTS):
                 self._dolphin_scenario.dolphin.execute(
-                    [DolphinNoOpControllerInput() for _ in range(4)]
+                    [
+                        DolphinGameCubeControllerNoOp(),
+                        DolphinGameCubeControllerNoOp(),
+                        DolphinGameCubeControllerNoOp(),
+                        DolphinGameCubeControllerNoOp(),
+                    ]
                 )
                 try:
                     frame_buffer = self._refresh_frame_buffer()
