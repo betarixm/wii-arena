@@ -4,14 +4,29 @@ set -euo pipefail
 display="${DOLPHIN_DISPLAY:-:99}"
 display_number="${display#:}"
 display_number="${display_number%%.*}"
-xorg_conf="${DOLPHIN_XORG_CONF:-/opt/wii-arena/etc/nvidia-xorg.conf}"
+xorg_template="${DOLPHIN_XORG_TEMPLATE:-/opt/wii-arena/etc/xorg.conf.template}"
+xorg_conf="${DOLPHIN_XORG_CONF:-/tmp/wii-arena-xorg.conf}"
 xorg_log="${DOLPHIN_XORG_LOG:-/tmp/wii-arena-xorg.log}"
 x_socket="/tmp/.X11-unix/X${display_number}"
 
 mkdir -p /tmp/.X11-unix
 chmod 1777 /tmp/.X11-unix
 
-if [ -f "${xorg_conf}" ]; then
+bus_id() {
+    local pci bus device_function device func
+    pci="$(nvidia-smi --query-gpu=pci.bus_id --format=csv,noheader)"
+    pci="${pci%%$'\n'*}"
+    pci="${pci//[[:space:]]/}"
+    pci="${pci#*:}"
+    bus="${pci%%:*}"
+    device_function="${pci#*:}"
+    device="${device_function%%.*}"
+    func="${device_function#*.}"
+    printf 'PCI:%d:%d:%d' "$((16#${bus}))" "$((16#${device}))" "$((10#${func}))"
+}
+
+if [ -f "${xorg_template}" ]; then
+    sed "s|@BUS_ID@|$(bus_id)|" "${xorg_template}" > "${xorg_conf}"
     xorg_config_args=(-config "${xorg_conf}")
 else
     xorg_config_args=()

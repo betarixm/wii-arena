@@ -83,6 +83,7 @@ COPY --from=dolphin-builder /opt/wii-arena-dolphin/ /opt/wii-arena-dolphin/
 COPY --from=vulkan-layer-builder /opt/wii-arena-vulkan-layer/ /opt/wii-arena-vulkan-layer/
 COPY containers/dolphin/entrypoint.sh /opt/wii-arena/bin/entrypoint
 COPY configurations/dolphin/scripts /scripts
+COPY configurations/dolphin/xorg.conf.template /opt/wii-arena/etc/xorg.conf.template
 RUN chmod +x /opt/wii-arena/bin/entrypoint
 COPY configurations/dolphin/settings/ /dolphin-user/
 
