@@ -16,6 +16,8 @@ class NvidiaDockerDolphin(DockerDolphin):
         wii_iso_file: Path,
         docker_client: DockerClient | None = None,
         container_socket_directory: str = "/run/wii-arena",
+        extra_volumes: dict[str, dict[str, str]] | None = None,
+        extra_dolphin_arguments: list[str] | None = None,
     ):
         super().__init__(
             docker_image=docker_image,
@@ -23,6 +25,8 @@ class NvidiaDockerDolphin(DockerDolphin):
             driver=CudaDriver(),
             docker_client=docker_client,
             container_socket_directory=container_socket_directory,
+            extra_volumes=extra_volumes,
+            extra_dolphin_arguments=extra_dolphin_arguments,
         )
 
     def _container(
@@ -49,6 +53,7 @@ class NvidiaDockerDolphin(DockerDolphin):
                     "bind": "/opt/wii-arena/etc/xorg.conf",
                     "mode": "ro",
                 },
+                **self._extra_volumes,
             },
             environment={
                 "NVIDIA_VISIBLE_DEVICES": "all",
@@ -64,6 +69,7 @@ class NvidiaDockerDolphin(DockerDolphin):
                 "--platform=x11",
                 "--video_backend=Vulkan",
                 "--user=/dolphin-user",
-                "--script=/scripts/control.py"
+                "--script=/scripts/control.py",
+                *self._extra_dolphin_arguments,
             ],
         )
