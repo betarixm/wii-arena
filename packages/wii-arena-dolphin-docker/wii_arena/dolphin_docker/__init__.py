@@ -131,6 +131,8 @@ class DockerDolphin(Dolphin, ABC):
         driver: Driver,
         docker_client: DockerClient | None = None,
         container_socket_directory: str = "/run/wii-arena",
+        extra_volumes: dict[str, dict[str, str]] | None = None,
+        extra_dolphin_arguments: list[str] | None = None,
     ):
         self._docker_client = (
             docker_client if docker_client is not None else DockerClient.from_env()
@@ -139,6 +141,10 @@ class DockerDolphin(Dolphin, ABC):
         self._wii_iso_file = wii_iso_file
         self._container_socket_directory = container_socket_directory
         self._driver = driver
+        self._extra_volumes = extra_volumes if extra_volumes is not None else {}
+        self._extra_dolphin_arguments = (
+            extra_dolphin_arguments if extra_dolphin_arguments is not None else []
+        )
 
     @property
     def _container_frame_socket_file(self) -> str:
