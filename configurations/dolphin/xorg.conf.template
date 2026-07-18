@@ -16,6 +16,7 @@ EndSection
 Section "Device"
     Identifier "Device0"
     Driver "nvidia"
+    BusID "@BUS_ID@"
     Option "AllowEmptyInitialConfiguration" "true"
     Option "UseDisplayDevice" "none"
     Option "HardDPMS" "false"
