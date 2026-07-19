@@ -93,7 +93,7 @@ class DolphinGameCubeControllerNoOp(BaseModel): ...
 
 DolphinAction = list[DolphinGameCubeControllerInput | DolphinGameCubeControllerNoOp]
 
-DolphinObservation = tuple[DolphinMemoryView, tuple[DolphinFrameBuffer, ...]]
+DolphinObservation = tuple[DolphinMemoryView, list[DolphinFrameBuffer]]
 
 _OVERRIDE_FLAG = 1 << 15
 
@@ -112,7 +112,7 @@ class Dolphin(SupportsSession):
 
         @abstractmethod
         def memory_view(self) -> DolphinMemoryView: ...
-        def frame_buffer(self) -> AbstractContextManager[tuple[DolphinFrameBuffer, ...]]: ...
+        def frame_buffer(self) -> AbstractContextManager[list[DolphinFrameBuffer]]: ...
 
         @staticmethod
         def _pack_action(action: DolphinAction) -> bytes:
@@ -195,7 +195,7 @@ class DolphinEnvironment(Environment[DolphinObservation, DolphinAction, None]):
             self.frame_stack = ExitStack()
             _LOGGER.debug("Created DolphinEnvironment.Session")
 
-        def _refresh_frame_buffer(self) -> tuple[DolphinFrameBuffer, ...]:
+        def _refresh_frame_buffer(self) -> list[DolphinFrameBuffer]:
             _LOGGER.debug("Refreshing frame buffer context")
             self.frame_stack.close()
             self.frame_stack = ExitStack()
@@ -205,7 +205,7 @@ class DolphinEnvironment(Environment[DolphinObservation, DolphinAction, None]):
 
         def reset(self) -> tuple[DolphinObservation, None]:
             _LOGGER.info("Resetting Dolphin environment session")
-            frame_buffer: tuple[DolphinFrameBuffer, ...] | None = None
+            frame_buffer: list[DolphinFrameBuffer] | None = None
             last_unavailable: DolphinFrameBufferUnavailable | None = None
             for _ in range(_INITIAL_FRAME_ATTEMPTS):
                 self._dolphin_scenario.dolphin.execute(
