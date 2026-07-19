@@ -89,6 +89,8 @@ class DolphinGameCubeControllerNoOp(BaseModel): ...
 
 DolphinAction = list[DolphinGameCubeControllerInput | DolphinGameCubeControllerNoOp]
 
+DolphinObservation = tuple[DolphinMemoryView, tuple[DolphinFrameBuffer, ...]]
+
 _OVERRIDE_FLAG = 1 << 15
 
 
@@ -106,7 +108,7 @@ class Dolphin(SupportsSession):
 
         @abstractmethod
         def memory_view(self) -> DolphinMemoryView: ...
-        def frame_buffer(self) -> AbstractContextManager[DolphinFrameBuffer]: ...
+        def frame_buffer(self) -> AbstractContextManager[tuple[DolphinFrameBuffer, ...]]: ...
 
         @staticmethod
         def _pack_action(action: DolphinAction) -> bytes:
@@ -179,13 +181,9 @@ class DolphinScenario(SupportsSession, ABC):
     ) -> AbstractContextManager[DolphinScenario.Session, bool | None]: ...
 
 
-class DolphinEnvironment(
-    Environment[tuple[DolphinMemoryView, DolphinFrameBuffer], DolphinAction, None]
-):
+class DolphinEnvironment(Environment[DolphinObservation, DolphinAction, None]):
     class Session(
-        Environment.Session[
-            tuple[DolphinMemoryView, DolphinFrameBuffer], DolphinAction, None
-        ],
+        Environment.Session[DolphinObservation, DolphinAction, None],
         SupportsSession.Session,
     ):
         def __init__(self, scenario_session: DolphinScenario.Session) -> None:
@@ -193,7 +191,7 @@ class DolphinEnvironment(
             self.frame_stack = ExitStack()
             _LOGGER.debug("Created DolphinEnvironment.Session")
 
-        def _refresh_frame_buffer(self) -> DolphinFrameBuffer:
+        def _refresh_frame_buffer(self) -> tuple[DolphinFrameBuffer, ...]:
             _LOGGER.debug("Refreshing frame buffer context")
             self.frame_stack.close()
             self.frame_stack = ExitStack()
@@ -201,9 +199,9 @@ class DolphinEnvironment(
                 self._dolphin_scenario.dolphin.frame_buffer()
             )
 
-        def reset(self) -> tuple[tuple[DolphinMemoryView, DolphinFrameBuffer], None]:
+        def reset(self) -> tuple[DolphinObservation, None]:
             _LOGGER.info("Resetting Dolphin environment session")
-            frame_buffer: DolphinFrameBuffer | None = None
+            frame_buffer: tuple[DolphinFrameBuffer, ...] | None = None
             last_unavailable: DolphinFrameBufferUnavailable | None = None
             for _ in range(_INITIAL_FRAME_ATTEMPTS):
                 self._dolphin_scenario.dolphin.execute(
@@ -238,9 +236,7 @@ class DolphinEnvironment(
 
         def step(
             self, action: DolphinAction
-        ) -> tuple[
-            tuple[DolphinMemoryView, DolphinFrameBuffer], Terminated, Truncated, None
-        ]:
+        ) -> tuple[DolphinObservation, Terminated, Truncated, None]:
             _LOGGER.debug("Stepping Dolphin environment with action=%s", action)
             self._dolphin_scenario.dolphin.execute(action)
             return (

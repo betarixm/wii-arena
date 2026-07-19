@@ -23,6 +23,10 @@ extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInst
 extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice device,
                                                                         const char *name);
 
+static const uint32_t MAX_PLAYER_SCREENS = 4;
+static const int32_t VIEWPORT_TOLERANCE = 2;
+static const float MIN_PLAYER_DEPTH = 0.5f;
+
 struct ExportSlot {
     VkBuffer buffer = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
@@ -34,6 +38,13 @@ struct ExportSlot {
     VkFormat format = VK_FORMAT_UNDEFINED;
 };
 
+struct ScreenRegion {
+    uint32_t offset = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t stride = 0;
+};
+
 struct CapturedFrame {
     VkBuffer buffer = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
@@ -43,6 +54,7 @@ struct CapturedFrame {
     uint32_t size = 0;
     uint32_t frame_id = 0;
     VkFormat format = VK_FORMAT_UNDEFINED;
+    std::vector<ScreenRegion> screens;
 };
 
 struct SwapchainInfo {
@@ -106,6 +118,39 @@ struct CommandBufferDescriptorInfo {
     std::unordered_map<uint32_t, VkImage> sampled_images_by_binding;
 };
 
+struct ObservationViewport {
+    int32_t x = 0;
+    int32_t y = 0;
+    int32_t width = 0;
+    int32_t height = 0;
+    float min_depth = 0.0f;
+};
+
+struct PipelineDepthState {
+    bool test = false;
+    bool write = false;
+};
+
+struct ObservationState {
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    ObservationViewport viewport;
+    bool drawing_3d = false;
+    ObservationViewport pending_region;
+    VkFramebuffer pending_framebuffer = VK_NULL_HANDLE;
+    std::vector<std::pair<VkFramebuffer, ObservationViewport>> queued;
+};
+
+struct ObservationTarget {
+    ExportSlot slot{};
+    bool valid = false;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t player_width = 0;
+    uint32_t player_height = 0;
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    bool written[MAX_PLAYER_SCREENS] = {};
+};
+
 struct PendingXfbCapture {
     VkImage image = VK_NULL_HANDLE;
 };
@@ -146,6 +191,9 @@ static PFN_vkCmdBindDescriptorSets g_next_cmd_bind_descriptor_sets = nullptr;
 static PFN_vkCmdDraw g_next_cmd_draw = nullptr;
 static PFN_vkCmdDrawIndexed g_next_cmd_draw_indexed = nullptr;
 static PFN_vkCmdPipelineBarrier g_next_cmd_pipeline_barrier = nullptr;
+static PFN_vkCreateGraphicsPipelines g_next_create_graphics_pipelines = nullptr;
+static PFN_vkCmdBindPipeline g_next_cmd_bind_pipeline = nullptr;
+static PFN_vkCmdSetViewport g_next_cmd_set_viewport = nullptr;
 static PFN_vkCmdCopyImageToBuffer g_next_cmd_copy_image_to_buffer = nullptr;
 static PFN_vkSetDebugUtilsObjectNameEXT g_next_set_debug_utils_object_name_ext = nullptr;
 
@@ -168,11 +216,16 @@ static std::unordered_map<VkDescriptorSet, DescriptorSetInfo> g_descriptor_sets;
 static std::unordered_map<VkCommandBuffer, CommandBufferDescriptorInfo>
     g_command_buffer_descriptors;
 static std::unordered_map<VkCommandBuffer, PendingXfbCapture> g_pending_xfb_captures;
+static std::unordered_map<VkPipeline, PipelineDepthState> g_pipeline_depth;
+static std::unordered_map<VkCommandBuffer, ObservationState> g_observations;
+static std::atomic<uint32_t> g_screen_width{0};
+static std::atomic<uint32_t> g_screen_height{0};
 static std::unordered_map<VkSwapchainKHR, SwapchainInfo> g_swapchains;
 static std::vector<ExportSlot> g_export_slots;
 static uint32_t g_next_export_slot = 0;
 static CapturedFrame g_latest_frame;
 static std::string g_last_capture_status = "no captured frame yet";
+static ObservationTarget g_observation;
 
 static bool verbose_logging() {
     const char *raw = std::getenv("FRAME_CAPTURE_VERBOSE");
@@ -290,8 +343,7 @@ static bool send_no_frame(int client) {
     if (status.empty()) {
         status = "no captured frame yet";
     }
-    std::string payload = "N" + status;
-    return write(client, payload.data(), payload.size()) == static_cast<ssize_t>(payload.size());
+    return write(client, status.data(), status.size()) == static_cast<ssize_t>(status.size());
 }
 
 static bool send_latest_frame_fd(int client) {
@@ -311,13 +363,21 @@ static bool send_latest_frame_fd(int client) {
         return send_no_frame(client);
     }
 
-    uint32_t header[6] = {
-        g_latest_frame.width, g_latest_frame.height,   g_latest_frame.stride,
-        g_latest_frame.size,  g_latest_frame.frame_id, static_cast<uint32_t>(g_latest_frame.format),
-    };
+    std::vector<uint32_t> header;
+    header.reserve(4 + g_latest_frame.screens.size() * 4);
+    header.push_back(g_latest_frame.frame_id);
+    header.push_back(static_cast<uint32_t>(g_latest_frame.format));
+    header.push_back(g_latest_frame.size);
+    header.push_back(static_cast<uint32_t>(g_latest_frame.screens.size()));
+    for (const ScreenRegion &screen : g_latest_frame.screens) {
+        header.push_back(screen.offset);
+        header.push_back(screen.width);
+        header.push_back(screen.height);
+        header.push_back(screen.stride);
+    }
     iovec iov{};
-    iov.iov_base = header;
-    iov.iov_len = sizeof(header);
+    iov.iov_base = header.data();
+    iov.iov_len = header.size() * sizeof(uint32_t);
 
     char control[CMSG_SPACE(sizeof(int))];
     std::memset(control, 0, sizeof(control));
@@ -453,6 +513,12 @@ static void load_device_functions(VkDevice device) {
         reinterpret_cast<PFN_vkCmdPipelineBarrier>(g_next_gdpa(device, "vkCmdPipelineBarrier"));
     g_next_cmd_copy_image_to_buffer =
         reinterpret_cast<PFN_vkCmdCopyImageToBuffer>(g_next_gdpa(device, "vkCmdCopyImageToBuffer"));
+    g_next_create_graphics_pipelines = reinterpret_cast<PFN_vkCreateGraphicsPipelines>(
+        g_next_gdpa(device, "vkCreateGraphicsPipelines"));
+    g_next_cmd_bind_pipeline =
+        reinterpret_cast<PFN_vkCmdBindPipeline>(g_next_gdpa(device, "vkCmdBindPipeline"));
+    g_next_cmd_set_viewport =
+        reinterpret_cast<PFN_vkCmdSetViewport>(g_next_gdpa(device, "vkCmdSetViewport"));
     if (!g_next_set_debug_utils_object_name_ext) {
         g_next_set_debug_utils_object_name_ext = reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(
             g_next_gdpa(device, "vkSetDebugUtilsObjectNameEXT"));
@@ -586,6 +652,296 @@ static ExportSlot *acquire_export_slot_locked(VkDeviceSize payload_size, uint32_
     return &slot;
 }
 
+static void record_image_region_to_buffer(VkCommandBuffer command_buffer, VkImage image,
+                                          VkImageLayout layout, VkBuffer buffer,
+                                          const VkBufferImageCopy &region) {
+    VkImageMemoryBarrier to_transfer{};
+    to_transfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    to_transfer.srcAccessMask = access_mask_for_layout(layout);
+    to_transfer.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    to_transfer.oldLayout = layout;
+    to_transfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    to_transfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_transfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_transfer.image = image;
+    to_transfer.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    to_transfer.subresourceRange.levelCount = 1;
+    to_transfer.subresourceRange.layerCount = 1;
+    g_next_cmd_pipeline_barrier(command_buffer, stage_for_layout(layout),
+                                VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                                &to_transfer);
+
+    g_next_cmd_copy_image_to_buffer(command_buffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                    buffer, 1, &region);
+
+    VkImageMemoryBarrier back = to_transfer;
+    back.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    back.dstAccessMask = access_mask_for_layout(layout);
+    back.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    back.newLayout = layout;
+    g_next_cmd_pipeline_barrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                stage_for_layout(layout), 0, 0, nullptr, 0, nullptr, 1, &back);
+}
+
+static void record_buffer_visible_barrier(VkCommandBuffer command_buffer, VkBuffer buffer,
+                                          VkDeviceSize size) {
+    VkBufferMemoryBarrier visible{};
+    visible.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    visible.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    visible.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+    visible.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    visible.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    visible.buffer = buffer;
+    visible.offset = 0;
+    visible.size = size;
+    g_next_cmd_pipeline_barrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 1, &visible, 0,
+                                nullptr);
+}
+
+static bool observation_enabled() {
+    const char *raw = std::getenv("FRAME_CAPTURE_OBSERVATION");
+    return raw && std::strcmp(raw, "0") != 0 && raw[0] != '\0';
+}
+
+static bool record_observation_region(VkCommandBuffer command_buffer, VkImage image,
+                                      const ImageInfo &info, const ObservationViewport &region) {
+    if (!is_supported_format(info.format) || info.samples != VK_SAMPLE_COUNT_1_BIT ||
+        info.layout == VK_IMAGE_LAYOUT_UNDEFINED) {
+        return false;
+    }
+    if (region.x < 0 || region.y < 0 || region.width <= 0 || region.height <= 0 ||
+        static_cast<uint32_t>(region.x + region.width) > info.extent.width ||
+        static_cast<uint32_t>(region.y + region.height) > info.extent.height) {
+        return false;
+    }
+
+    const uint32_t column = static_cast<uint32_t>(region.x) * 2 >= g_screen_width ? 1u : 0u;
+    const uint32_t row = static_cast<uint32_t>(region.y) * 2 >= g_screen_height ? 1u : 0u;
+    const uint32_t player_index = row * 2 + column;
+
+    const uint32_t player_width = static_cast<uint32_t>(region.width);
+    const uint32_t player_height = static_cast<uint32_t>(region.height);
+    const uint32_t screen_size = g_screen_width * 4 * g_screen_height;
+    const uint32_t player_size = player_width * 4 * player_height;
+    const VkDeviceSize total_size = static_cast<VkDeviceSize>(screen_size) +
+                                    static_cast<VkDeviceSize>(player_size) * MAX_PLAYER_SCREENS;
+
+    {
+        std::lock_guard<std::mutex> lock(g_export_mu);
+        if (!g_observation.valid || g_observation.width != g_screen_width ||
+            g_observation.height != g_screen_height || g_observation.player_width != player_width ||
+            g_observation.player_height != player_height || g_observation.format != info.format) {
+            ExportSlot *slot = acquire_export_slot_locked(
+                total_size, g_screen_width, g_screen_height, g_screen_width * 4, info.format);
+            if (!slot) {
+                return false;
+            }
+            g_observation.slot = *slot;
+            g_observation.valid = true;
+            g_observation.width = g_screen_width;
+            g_observation.height = g_screen_height;
+            g_observation.player_width = player_width;
+            g_observation.player_height = player_height;
+            g_observation.format = info.format;
+            for (uint32_t i = 0; i < MAX_PLAYER_SCREENS; ++i) {
+                g_observation.written[i] = false;
+            }
+        }
+        g_observation.written[player_index] = true;
+    }
+
+    VkBufferImageCopy copy{};
+    copy.bufferOffset = static_cast<VkDeviceSize>(screen_size) +
+                        static_cast<VkDeviceSize>(player_size) * player_index;
+    copy.bufferRowLength = player_width;
+    copy.bufferImageHeight = player_height;
+    copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    copy.imageSubresource.layerCount = 1;
+    copy.imageOffset = {region.x, region.y, 0};
+    copy.imageExtent = {player_width, player_height, 1};
+    record_image_region_to_buffer(command_buffer, image, info.layout, g_observation.slot.buffer,
+                                  copy);
+    return true;
+}
+
+static bool observation_color_attachment_locked(VkFramebuffer framebuffer, VkImage *image,
+                                                ImageInfo *info) {
+    auto framebuffer_it = g_framebuffers.find(framebuffer);
+    if (framebuffer_it == g_framebuffers.end() || framebuffer_it->second.attachments.empty()) {
+        return false;
+    }
+    auto image_it = g_images.find(framebuffer_it->second.attachments[0]);
+    if (image_it == g_images.end()) {
+        return false;
+    }
+    *image = image_it->first;
+    *info = image_it->second;
+    return true;
+}
+
+static void observation_on_draw(VkCommandBuffer command_buffer) {
+    if (!observation_enabled()) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(g_mu);
+    ObservationState &state = g_observations[command_buffer];
+
+    PipelineDepthState depth{};
+    auto pipeline_it = g_pipeline_depth.find(state.pipeline);
+    if (pipeline_it != g_pipeline_depth.end()) {
+        depth = pipeline_it->second;
+    }
+
+    uint32_t pass_width = 0;
+    uint32_t pass_height = 0;
+    VkFramebuffer framebuffer = VK_NULL_HANDLE;
+    auto pass_it = g_active_render_passes.find(command_buffer);
+    if (pass_it != g_active_render_passes.end()) {
+        framebuffer = pass_it->second.framebuffer;
+        auto framebuffer_it = g_framebuffers.find(framebuffer);
+        if (framebuffer_it != g_framebuffers.end()) {
+            pass_width = framebuffer_it->second.width;
+            pass_height = framebuffer_it->second.height;
+        }
+    }
+    if (pass_width == 0 || pass_height == 0) {
+        return;
+    }
+    if (g_screen_width == 0 || g_screen_height == 0) {
+        return;
+    }
+
+    const auto matches_tile = [&](uint32_t divisor) {
+        const int32_t tile_width = static_cast<int32_t>(g_screen_width / divisor);
+        const int32_t tile_height = static_cast<int32_t>(g_screen_height / divisor);
+        return std::abs(state.viewport.width - tile_width) <= VIEWPORT_TOLERANCE &&
+               std::abs(state.viewport.height - tile_height) <= VIEWPORT_TOLERANCE;
+    };
+    const bool player_sized =
+        (matches_tile(1) || matches_tile(2)) && state.viewport.min_depth > MIN_PLAYER_DEPTH &&
+        state.viewport.x + state.viewport.width <= static_cast<int32_t>(g_screen_width) &&
+        state.viewport.y + state.viewport.height <= static_cast<int32_t>(g_screen_height);
+
+    if (depth.test && player_sized) {
+        state.drawing_3d = true;
+        state.pending_region = state.viewport;
+        state.pending_framebuffer = framebuffer;
+    } else if (!depth.test && !depth.write && state.drawing_3d) {
+        state.drawing_3d = false;
+        if (state.pending_framebuffer != VK_NULL_HANDLE) {
+            state.queued.emplace_back(state.pending_framebuffer, state.pending_region);
+        }
+    }
+}
+
+static void observation_on_end_render_pass(VkCommandBuffer command_buffer,
+                                           VkFramebuffer framebuffer) {
+    if (!observation_enabled()) {
+        return;
+    }
+    std::vector<ObservationViewport> viewports;
+    VkImage image = VK_NULL_HANDLE;
+    ImageInfo info{};
+    {
+        std::lock_guard<std::mutex> lock(g_mu);
+        auto state_it = g_observations.find(command_buffer);
+        if (state_it == g_observations.end() || state_it->second.queued.empty()) {
+            return;
+        }
+        std::vector<std::pair<VkFramebuffer, ObservationViewport>> remaining;
+        for (const auto &entry : state_it->second.queued) {
+            if (entry.first == framebuffer) {
+                viewports.push_back(entry.second);
+            } else {
+                remaining.push_back(entry);
+            }
+        }
+        state_it->second.queued = remaining;
+        if (viewports.empty() || !observation_color_attachment_locked(framebuffer, &image, &info)) {
+            return;
+        }
+    }
+    for (const auto &viewport : viewports) {
+        record_observation_region(command_buffer, image, info, viewport);
+    }
+}
+
+static bool observation_publish(VkCommandBuffer command_buffer, VkImage broadcast_image,
+                                const ImageInfo &broadcast_info) {
+    ExportSlot slot{};
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t player_width = 0;
+    uint32_t player_height = 0;
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    bool written[MAX_PLAYER_SCREENS] = {};
+    {
+        std::lock_guard<std::mutex> lock(g_export_mu);
+        if (!g_observation.valid) {
+            return false;
+        }
+        slot = g_observation.slot;
+        width = g_observation.width;
+        height = g_observation.height;
+        player_width = g_observation.player_width;
+        player_height = g_observation.player_height;
+        format = g_observation.format;
+        for (uint32_t i = 0; i < MAX_PLAYER_SCREENS; ++i) {
+            written[i] = g_observation.written[i];
+        }
+    }
+
+    const uint32_t screen_stride = width * 4;
+    const uint32_t screen_size = screen_stride * height;
+    const uint32_t player_stride = player_width * 4;
+    const uint32_t player_size = player_stride * player_height;
+
+    if (broadcast_image != VK_NULL_HANDLE && broadcast_info.extent.width == width &&
+        broadcast_info.extent.height == height) {
+        VkBufferImageCopy copy{};
+        copy.bufferOffset = 0;
+        copy.bufferRowLength = width;
+        copy.bufferImageHeight = height;
+        copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        copy.imageSubresource.layerCount = 1;
+        copy.imageExtent = {width, height, 1};
+        record_image_region_to_buffer(command_buffer, broadcast_image, broadcast_info.layout,
+                                      slot.buffer, copy);
+    }
+
+    std::vector<ScreenRegion> screens;
+    screens.push_back(ScreenRegion{0, width, height, screen_stride});
+    for (uint32_t i = 0; i < MAX_PLAYER_SCREENS; ++i) {
+        if (!written[i]) {
+            continue;
+        }
+        screens.push_back(
+            ScreenRegion{screen_size + player_size * i, player_width, player_height, player_stride});
+    }
+
+    record_buffer_visible_barrier(command_buffer, slot.buffer,
+                                  static_cast<VkDeviceSize>(slot.allocation_size));
+    {
+        std::lock_guard<std::mutex> lock(g_export_mu);
+        g_latest_frame = CapturedFrame{slot.buffer,
+                                       slot.memory,
+                                       width,
+                                       height,
+                                       screen_stride,
+                                       static_cast<uint32_t>(slot.allocation_size),
+                                       g_frame_id.fetch_add(1),
+                                       format,
+                                       screens};
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_mu);
+        g_pending_inline_capture_command_buffers.insert(command_buffer);
+    }
+    set_capture_status("observation capture recorded");
+    return true;
+}
+
 static bool record_inline_capture_to_latest(VkCommandBuffer command_buffer, VkImage image,
                                             const ImageInfo &info, const char *label) {
     if (!g_device || !g_next_cmd_copy_image_to_buffer || !g_next_cmd_pipeline_barrier) {
@@ -622,50 +978,12 @@ static bool record_inline_capture_to_latest(VkCommandBuffer command_buffer, VkIm
         slot_snapshot = *slot;
     }
 
-    const VkImageLayout old_layout = info.layout;
-    VkImageMemoryBarrier to_transfer{};
-    to_transfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    to_transfer.srcAccessMask = access_mask_for_layout(old_layout);
-    to_transfer.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-    to_transfer.oldLayout = old_layout;
-    to_transfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    to_transfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    to_transfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    to_transfer.image = image;
-    to_transfer.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    to_transfer.subresourceRange.levelCount = 1;
-    to_transfer.subresourceRange.layerCount = 1;
-    g_next_cmd_pipeline_barrier(command_buffer, stage_for_layout(old_layout),
-                                VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
-                                &to_transfer);
-
     VkBufferImageCopy region{};
     region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.imageSubresource.layerCount = 1;
     region.imageExtent = {width, height, 1};
-    g_next_cmd_copy_image_to_buffer(command_buffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                    slot_snapshot.buffer, 1, &region);
-
-    VkBufferMemoryBarrier buffer_visible{};
-    buffer_visible.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-    buffer_visible.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    buffer_visible.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-    buffer_visible.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    buffer_visible.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    buffer_visible.buffer = slot_snapshot.buffer;
-    buffer_visible.offset = 0;
-    buffer_visible.size = payload_size;
-    g_next_cmd_pipeline_barrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 1,
-                                &buffer_visible, 0, nullptr);
-
-    VkImageMemoryBarrier back = to_transfer;
-    back.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-    back.dstAccessMask = access_mask_for_layout(old_layout);
-    back.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    back.newLayout = old_layout;
-    g_next_cmd_pipeline_barrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                stage_for_layout(old_layout), 0, 0, nullptr, 0, nullptr, 1, &back);
+    record_image_region_to_buffer(command_buffer, image, info.layout, slot_snapshot.buffer, region);
+    record_buffer_visible_barrier(command_buffer, slot_snapshot.buffer, payload_size);
 
     {
         std::lock_guard<std::mutex> lock(g_export_mu);
@@ -678,6 +996,7 @@ static bool record_inline_capture_to_latest(VkCommandBuffer command_buffer, VkIm
             static_cast<uint32_t>(slot_snapshot.allocation_size),
             g_frame_id.fetch_add(1),
             info.format,
+            {ScreenRegion{0, width, height, stride}},
         };
     }
     {
@@ -688,7 +1007,7 @@ static bool record_inline_capture_to_latest(VkCommandBuffer command_buffer, VkIm
     if (verbose_logging()) {
         std::fprintf(stderr,
                      "[frame-capture] recorded inline %s capture %ux%u fmt=%d layout=%d size=%u\n",
-                     label, width, height, info.format, old_layout,
+                     label, width, height, info.format, info.layout,
                      static_cast<uint32_t>(slot_snapshot.allocation_size));
     }
     return true;
@@ -1101,6 +1420,7 @@ static void clear_command_buffer_tracking_locked(VkCommandBuffer command_buffer)
     g_pending_inline_capture_command_buffers.erase(command_buffer);
     g_command_buffer_descriptors.erase(command_buffer);
     g_pending_xfb_captures.erase(command_buffer);
+    g_observations.erase(command_buffer);
 }
 
 extern "C" VKAPI_ATTR VkResult VKAPI_CALL
@@ -1248,8 +1568,18 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdEndRenderPass(VkCommandBuffer command
     }
 
     if (xfb_capture_image != VK_NULL_HANDLE) {
-        record_inline_capture_to_latest(command_buffer, xfb_capture_image, xfb_capture_info,
-                                        "xfb-source");
+        g_screen_width = xfb_capture_info.extent.width;
+        g_screen_height = xfb_capture_info.extent.height;
+    }
+
+    observation_on_end_render_pass(command_buffer, active.framebuffer);
+
+    if (xfb_capture_image != VK_NULL_HANDLE) {
+        if (!observation_enabled() ||
+            !observation_publish(command_buffer, xfb_capture_image, xfb_capture_info)) {
+            record_inline_capture_to_latest(command_buffer, xfb_capture_image, xfb_capture_info,
+                                            "xfb-source");
+        }
     }
 }
 
@@ -1372,10 +1702,57 @@ vkCmdBindDescriptorSets(VkCommandBuffer command_buffer, VkPipelineBindPoint pipe
     }
 }
 
+extern "C" VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(
+    VkDevice device, VkPipelineCache pipeline_cache, uint32_t create_info_count,
+    const VkGraphicsPipelineCreateInfo *create_infos, const VkAllocationCallbacks *allocator,
+    VkPipeline *pipelines) {
+    VkResult result = g_next_create_graphics_pipelines(device, pipeline_cache, create_info_count,
+                                                       create_infos, allocator, pipelines);
+    if (result != VK_SUCCESS) {
+        return result;
+    }
+    std::lock_guard<std::mutex> lock(g_mu);
+    for (uint32_t i = 0; i < create_info_count; ++i) {
+        PipelineDepthState depth{};
+        if (create_infos[i].pDepthStencilState) {
+            depth.test = create_infos[i].pDepthStencilState->depthTestEnable == VK_TRUE;
+            depth.write = create_infos[i].pDepthStencilState->depthWriteEnable == VK_TRUE;
+        }
+        g_pipeline_depth[pipelines[i]] = depth;
+    }
+    return result;
+}
+
+extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdBindPipeline(VkCommandBuffer command_buffer,
+                                                        VkPipelineBindPoint bind_point,
+                                                        VkPipeline pipeline) {
+    g_next_cmd_bind_pipeline(command_buffer, bind_point, pipeline);
+    if (bind_point != VK_PIPELINE_BIND_POINT_GRAPHICS) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(g_mu);
+    g_observations[command_buffer].pipeline = pipeline;
+}
+
+extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdSetViewport(VkCommandBuffer command_buffer,
+                                                       uint32_t first_viewport,
+                                                       uint32_t viewport_count,
+                                                       const VkViewport *viewports) {
+    g_next_cmd_set_viewport(command_buffer, first_viewport, viewport_count, viewports);
+    std::lock_guard<std::mutex> lock(g_mu);
+    ObservationViewport &viewport = g_observations[command_buffer].viewport;
+    viewport.x = static_cast<int32_t>(viewports[0].x);
+    viewport.y = static_cast<int32_t>(viewports[0].y);
+    viewport.width = static_cast<int32_t>(viewports[0].width);
+    viewport.height = static_cast<int32_t>(viewports[0].height);
+    viewport.min_depth = viewports[0].minDepth;
+}
+
 extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdDraw(VkCommandBuffer command_buffer,
                                                 uint32_t vertex_count, uint32_t instance_count,
                                                 uint32_t first_vertex, uint32_t first_instance) {
     remember_bound_xfb_source(command_buffer);
+    observation_on_draw(command_buffer);
     g_next_cmd_draw(command_buffer, vertex_count, instance_count, first_vertex, first_instance);
 }
 
@@ -1385,6 +1762,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdDrawIndexed(VkCommandBuffer command_b
                                                        uint32_t first_index, int32_t vertex_offset,
                                                        uint32_t first_instance) {
     remember_bound_xfb_source(command_buffer);
+    observation_on_draw(command_buffer);
     g_next_cmd_draw_indexed(command_buffer, index_count, instance_count, first_index, vertex_offset,
                             first_instance);
 }
@@ -1493,6 +1871,15 @@ extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice
     }
     if (std::strcmp(name, "vkCmdBindDescriptorSets") == 0) {
         return reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindDescriptorSets);
+    }
+    if (std::strcmp(name, "vkCreateGraphicsPipelines") == 0) {
+        return reinterpret_cast<PFN_vkVoidFunction>(vkCreateGraphicsPipelines);
+    }
+    if (std::strcmp(name, "vkCmdBindPipeline") == 0) {
+        return reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindPipeline);
+    }
+    if (std::strcmp(name, "vkCmdSetViewport") == 0) {
+        return reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetViewport);
     }
     if (std::strcmp(name, "vkCmdDraw") == 0) {
         return reinterpret_cast<PFN_vkVoidFunction>(vkCmdDraw);

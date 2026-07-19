@@ -62,6 +62,22 @@ finally:
 """
 
 
+def _unpack_frame_header(
+    header: bytes,
+) -> tuple[int, int, int, list[tuple[int, int, int, int]]]:
+    if len(header) < 16:
+        raise RuntimeError(f"Frame header too short: {len(header)}")
+    frame_id, frame_format, size, count = struct.unpack("IIII", header[:16])
+    if count == 0 or len(header) < 16 + count * 16:
+        raise RuntimeError(
+            f"Frame header declares {count} screens but is {len(header)} bytes."
+        )
+    screens = [
+        struct.unpack_from("IIII", header, 16 + index * 16) for index in range(count)
+    ]
+    return frame_id, frame_format, size, screens
+
+
 class DockerDolphin(Dolphin, ABC):
     class Session(Dolphin.Session):
         def __init__(
@@ -80,7 +96,7 @@ class DockerDolphin(Dolphin, ABC):
             return self._memory_view
 
         @contextmanager
-        def frame_buffer(self) -> Iterator[DolphinFrameBuffer]:
+        def frame_buffer(self) -> Iterator[tuple[DolphinFrameBuffer, ...]]:
             self._frame_socket.sendall(b"R")
             fds = array.array("i")
             msg, ancdata, _, _ = self._frame_socket.recvmsg(
@@ -88,11 +104,6 @@ class DockerDolphin(Dolphin, ABC):
             )
             if not msg:
                 raise RuntimeError("Frame socket closed before sending a frame packet.")
-            if msg[:1] == b"N":
-                status = msg[1:].decode("utf-8", errors="replace")
-                raise DolphinFrameBufferUnavailable(
-                    status or "Layer does not have a captured frame yet."
-                )
 
             fd: int | None = None
             for cmsg_level, cmsg_type, cmsg_data in ancdata:
@@ -102,26 +113,31 @@ class DockerDolphin(Dolphin, ABC):
                         fd = int(fds[0])
                         break
             if fd is None:
-                raise RuntimeError("Layer response did not include a frame fd.")
+                status = msg.decode("utf-8", errors="replace")
+                raise DolphinFrameBufferUnavailable(
+                    status or "Layer does not have a captured frame yet."
+                )
 
-            if len(msg) < 24:
+            try:
+                frame_id, frame_format, size, screens = _unpack_frame_header(msg)
+            except RuntimeError:
                 os.close(fd)
-                raise RuntimeError(f"Frame header too short: {len(msg)}")
+                raise
 
-            width, height, stride, size, frame_id, frame_format = struct.unpack(
-                "IIIIII", msg[:24]
-            )
-            with self._driver.dlpack_from_file_descriptor(
-                fd, size, height, stride
-            ) as frame:
-                yield DolphinFrameBuffer(
-                    frame,
-                    width=width,
-                    height=height,
-                    stride=stride,
-                    size=size,
-                    frame_id=frame_id,
-                    frame_format=frame_format,
+            with self._driver.dlpack_regions_from_file_descriptor(
+                fd, size, [(offset, height, stride) for offset, _, height, stride in screens]
+            ) as arrays:
+                yield tuple(
+                    DolphinFrameBuffer(
+                        array,
+                        width=width,
+                        height=height,
+                        stride=stride,
+                        size=stride * height,
+                        frame_id=frame_id,
+                        frame_format=frame_format,
+                    )
+                    for (_, width, height, stride), array in zip(screens, arrays)
                 )
 
     def __init__(
