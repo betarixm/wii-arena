@@ -3,7 +3,7 @@ name = "wii-arena-dolphin-docker-nvidia"
 version = "0.1.0"
 description = ""
 readme = "wii_arena/dolphin_docker_nvidia/README.md"
-requires-python = ">=3.14"
+requires-python = "==3.12.*"
 dependencies = ["wii-arena-dolphin-docker", "wii-arena-cuda-driver"]
 
 [build-system]

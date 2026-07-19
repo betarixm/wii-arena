@@ -3,7 +3,7 @@ name = "wii-arena-dolphin-docker"
 version = "0.1.0"
 description = ""
 readme = "wii_arena/dolphin_docker/README.md"
-requires-python = ">=3.14"
+requires-python = "==3.12.*"
 dependencies = ["docker>=7.1.0", "wii-arena-dolphin", "wii-arena-dlpack"]
 
 [build-system]

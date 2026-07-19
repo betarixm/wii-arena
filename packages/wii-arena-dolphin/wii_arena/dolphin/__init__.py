@@ -5,14 +5,18 @@ import socket
 import struct
 from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager, ExitStack, contextmanager
-from types import CapsuleType
 from typing import Iterator, NewType
 
 from pydantic import BaseModel, Field
 from wii_arena.core.environment.protocols import Environment
 from wii_arena.core.environment.types import Terminated, Truncated
 from wii_arena.core.session.protocols import SupportsSession
-from wii_arena.dlpack import DlpackDevice, DlpackVersion, SupportsDlpack
+from wii_arena.dlpack import (
+    DlpackCapsule,
+    DlpackDevice,
+    DlpackVersion,
+    SupportsDlpack,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -48,7 +52,7 @@ class DolphinFrameBuffer(SupportsDlpack):
         max_version: DlpackVersion | None = None,
         dl_device: DlpackDevice | None = None,
         copy: bool | None = None,
-    ) -> CapsuleType:
+    ) -> DlpackCapsule:
         return self._frame.__dlpack__(
             stream=stream,
             max_version=max_version,

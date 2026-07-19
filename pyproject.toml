@@ -3,7 +3,7 @@ name = "wii-arena"
 version = "0.1.0"
 description = ""
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = "==3.12.*"
 dependencies = ["pillow>=12.2.0"]
 
 [dependency-groups]
@@ -60,6 +60,6 @@ extraPaths = [
 ]
 venvPath = "."
 venv = ".venv"
-pythonVersion = "3.14"
+pythonVersion = "3.12"
 useLibraryCodeForTypes = true
 typeCheckingMode = "strict"
