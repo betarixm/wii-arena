@@ -3,10 +3,10 @@ from __future__ import annotations
 import ctypes
 import os
 from contextlib import contextmanager
-from typing import Any, Iterator, cast
+from typing import Any, Iterator, Sequence, cast
 
 import cupy  # pyright: ignore[reportMissingTypeStubs]
-from wii_arena.dlpack import Driver, SupportsDlpack
+from wii_arena.dlpack import DlpackRegion, Driver, SupportsDlpack
 
 _CUPY = cast(Any, cupy)
 _CUPY_CUDA = cast(Any, cupy.cuda)
@@ -77,10 +77,9 @@ class CudaDriver(Driver):
         self._runtime = cuda_runtime if cuda_runtime is not None else _CudaRuntime()
 
     @contextmanager
-    def dlpack_from_file_descriptor(
-        self, file_descriptor: int, size: int, height: int, stride: int
-    ) -> Iterator[SupportsDlpack]:
-
+    def dlpack_regions_from_file_descriptor(
+        self, file_descriptor: int, size: int, regions: Sequence[DlpackRegion]
+    ) -> Iterator[list[SupportsDlpack]]:
         desc = _CudaExternalMemoryHandleDescriptor()
         desc.type = 1  # CU_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD
         desc.handle.fd = file_descriptor
@@ -111,13 +110,14 @@ class CudaDriver(Driver):
             # Ownership of file_descriptor is transferred to CUDA on successful import.
             file_descriptor = -1
             unowned = _CUPY_CUDA.UnownedMemory(pointer.value, size, owner=ext)
-            memptr = _CUPY_CUDA.MemoryPointer(unowned, 0)
-            cupy_array = _CUPY.ndarray(
-                (height, stride // 4, 4),
-                dtype=_CUPY.uint8,
-                memptr=memptr,
-            )
-            yield cupy_array
+            yield [
+                _CUPY.ndarray(
+                    (height, stride // 4, 4),
+                    dtype=_CUPY.uint8,
+                    memptr=_CUPY_CUDA.MemoryPointer(unowned, offset),
+                )
+                for offset, height, stride in regions
+            ]
         finally:
             if ext.value:
                 self._runtime.lib.cuDestroyExternalMemory(ext)

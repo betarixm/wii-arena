@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager
 from enum import IntEnum
 from types import CapsuleType
-from typing import Protocol, TypeAlias
+from typing import Protocol, Sequence, TypeAlias
 
 
 class DlpackDeviceType(IntEnum):
@@ -20,6 +20,7 @@ class DlpackDeviceType(IntEnum):
 
 DlpackDevice: TypeAlias = tuple[DlpackDeviceType, int]
 DlpackVersion: TypeAlias = tuple[int, int]
+DlpackRegion: TypeAlias = tuple[int, int, int]
 
 
 class SupportsDlpack(Protocol):
@@ -37,6 +38,6 @@ class SupportsDlpack(Protocol):
 
 class Driver(ABC):
     @abstractmethod
-    def dlpack_from_file_descriptor(
-        self, file_descriptor: int, size: int, height: int, stride: int
-    ) -> AbstractContextManager[SupportsDlpack]: ...
+    def dlpack_regions_from_file_descriptor(
+        self, file_descriptor: int, size: int, regions: Sequence[DlpackRegion]
+    ) -> AbstractContextManager[list[SupportsDlpack]]: ...
