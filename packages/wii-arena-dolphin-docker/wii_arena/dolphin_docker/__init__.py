@@ -96,7 +96,7 @@ class DockerDolphin(Dolphin, ABC):
             return self._memory_view
 
         @contextmanager
-        def frame_buffer(self) -> Iterator[tuple[DolphinFrameBuffer, ...]]:
+        def frame_buffer(self) -> Iterator[list[DolphinFrameBuffer]]:
             self._frame_socket.sendall(b"R")
             fds = array.array("i")
             msg, ancdata, _, _ = self._frame_socket.recvmsg(
@@ -127,7 +127,7 @@ class DockerDolphin(Dolphin, ABC):
             with self._driver.dlpack_regions_from_file_descriptor(
                 fd, size, [(offset, height, stride) for offset, _, height, stride in screens]
             ) as arrays:
-                yield tuple(
+                yield [
                     DolphinFrameBuffer(
                         array,
                         width=width,
@@ -138,7 +138,7 @@ class DockerDolphin(Dolphin, ABC):
                         frame_format=frame_format,
                     )
                     for (_, width, height, stride), array in zip(screens, arrays)
-                )
+                ]
 
     def __init__(
         self,
