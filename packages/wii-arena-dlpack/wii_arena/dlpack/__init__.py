@@ -1,8 +1,7 @@
 from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager
 from enum import IntEnum
-from types import CapsuleType
-from typing import Protocol, Sequence, TypeAlias
+from typing import Any, Protocol, Sequence, TypeAlias
 
 
 class DlpackDeviceType(IntEnum):
@@ -18,6 +17,7 @@ class DlpackDeviceType(IntEnum):
     ONE_API = 14
 
 
+DlpackCapsule: TypeAlias = Any
 DlpackDevice: TypeAlias = tuple[DlpackDeviceType, int]
 DlpackVersion: TypeAlias = tuple[int, int]
 DlpackRegion: TypeAlias = tuple[int, int, int]
@@ -31,7 +31,7 @@ class SupportsDlpack(Protocol):
         max_version: DlpackVersion | None = None,
         dl_device: DlpackDevice | None = None,
         copy: bool | None = None,
-    ) -> CapsuleType: ...
+    ) -> DlpackCapsule: ...
 
     def __dlpack_device__(self) -> DlpackDevice: ...
 

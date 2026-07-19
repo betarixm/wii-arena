@@ -3,7 +3,7 @@ name = "wii-arena-dolphin-local"
 version = "0.1.0"
 description = ""
 readme = "wii_arena/dolphin_local/README.md"
-requires-python = ">=3.14"
+requires-python = "==3.12.*"
 dependencies = ["wii-arena-dolphin", "wii-arena-dlpack"]
 
 [build-system]

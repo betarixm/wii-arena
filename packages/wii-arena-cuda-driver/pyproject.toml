@@ -3,7 +3,7 @@ name = "wii-arena-cuda-driver"
 version = "0.1.0"
 description = ""
 readme = "wii_arena/cuda_driver/README.md"
-requires-python = ">=3.14"
+requires-python = "==3.12.*"
 dependencies = ["cupy-cuda13x>=14.1.0", "wii-arena-dlpack"]
 
 [build-system]
