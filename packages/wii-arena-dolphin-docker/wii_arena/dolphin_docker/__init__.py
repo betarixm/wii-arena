@@ -26,6 +26,7 @@ from wii_arena.dolphin import (
 _DOLPHIN_MEMORY_FD_SCAN_SCRIPT = """\
 import array, os, socket, sys
 sock_path = sys.argv[1]
+open_mode = os.O_RDWR if sys.argv[2] == 'rw' else os.O_RDONLY
 target_fd = None
 target_pid = None
 for pid in os.listdir('/proc'):
@@ -50,7 +51,7 @@ for pid in os.listdir('/proc'):
         break
 if target_fd is None:
     raise SystemExit(11)
-dup_fd = os.open(f'/proc/{target_pid}/fd/{target_fd}', os.O_RDONLY)
+dup_fd = os.open(f'/proc/{target_pid}/fd/{target_fd}', open_mode)
 sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 try:
     sock.connect(sock_path)
@@ -150,6 +151,7 @@ class DockerDolphin(Dolphin, ABC):
         extra_volumes: dict[str, dict[str, str]] | None = None,
         extra_dolphin_arguments: list[str] | None = None,
         extra_environment: dict[str, str] | None = None,
+        writable_memory: bool = False,
     ):
         self._docker_client = (
             docker_client if docker_client is not None else DockerClient.from_env()
@@ -165,6 +167,7 @@ class DockerDolphin(Dolphin, ABC):
         self._extra_environment = (
             extra_environment if extra_environment is not None else {}
         )
+        self._writable_memory = writable_memory
 
     @property
     def _container_frame_socket_file(self) -> str:
@@ -208,6 +211,7 @@ class DockerDolphin(Dolphin, ABC):
                     dev_shm_directory=Path(dev_shm_directory),
                     host_socket_path=memory_fd_socket_host,
                     container_socket_path=f"{self._container_socket_directory}/memory_fd.sock",
+                    writable=self._writable_memory,
                 )
                 yield DockerDolphin.Session(
                     memory_view=memory_view,
@@ -238,8 +242,10 @@ def _resolve_memory_view(
     dev_shm_directory: Path,
     host_socket_path: Path,
     container_socket_path: str,
+    writable: bool = False,
     timeout_sec: float = 30.0,
 ) -> DolphinMemoryView:
+    protection = mmap.PROT_READ | mmap.PROT_WRITE if writable else mmap.PROT_READ
     deadline = time.monotonic() + timeout_sec
     with _use_host_unix_socket(host_socket_path) as host_unix_socket:
         while time.monotonic() < deadline:
@@ -247,11 +253,12 @@ def _resolve_memory_view(
                 container=container,
                 container_socket_path=container_socket_path,
                 host_unix_socket=host_unix_socket,
+                writable=writable,
             ) as memory_fd:
                 if memory_fd is not None:
                     try:
                         mapped = mmap.mmap(
-                            memory_fd, 0, flags=mmap.MAP_SHARED, prot=mmap.PROT_READ
+                            memory_fd, 0, flags=mmap.MAP_SHARED, prot=protection
                         )
                     finally:
                         os.close(memory_fd)
@@ -291,9 +298,16 @@ def _use_dolphin_memory_fd(
     container: Container,
     container_socket_path: str,
     host_unix_socket: socket.socket,
+    writable: bool = False,
 ) -> Iterator[int | None]:
     result = container.exec_run(
-        cmd=["python3", "-c", _DOLPHIN_MEMORY_FD_SCAN_SCRIPT, container_socket_path],
+        cmd=[
+            "python3",
+            "-c",
+            _DOLPHIN_MEMORY_FD_SCAN_SCRIPT,
+            container_socket_path,
+            "rw" if writable else "ro",
+        ],
         stdout=True,
         stderr=True,
     )

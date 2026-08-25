@@ -18,6 +18,7 @@ class NvidiaDockerDolphin(DockerDolphin):
         extra_dolphin_arguments: list[str] | None = None,
         extra_environment: dict[str, str] | None = None,
         gpu: str = "0",
+        writable_memory: bool = False,
     ):
         super().__init__(
             docker_image=docker_image,
@@ -28,6 +29,7 @@ class NvidiaDockerDolphin(DockerDolphin):
             extra_volumes=extra_volumes,
             extra_dolphin_arguments=extra_dolphin_arguments,
             extra_environment=extra_environment,
+            writable_memory=writable_memory,
         )
         self._gpu = gpu
 
