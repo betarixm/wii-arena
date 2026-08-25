@@ -149,6 +149,7 @@ class DockerDolphin(Dolphin, ABC):
         container_socket_directory: str = "/run/wii-arena",
         extra_volumes: dict[str, dict[str, str]] | None = None,
         extra_dolphin_arguments: list[str] | None = None,
+        extra_environment: dict[str, str] | None = None,
     ):
         self._docker_client = (
             docker_client if docker_client is not None else DockerClient.from_env()
@@ -160,6 +161,9 @@ class DockerDolphin(Dolphin, ABC):
         self._extra_volumes = extra_volumes if extra_volumes is not None else {}
         self._extra_dolphin_arguments = (
             extra_dolphin_arguments if extra_dolphin_arguments is not None else []
+        )
+        self._extra_environment = (
+            extra_environment if extra_environment is not None else {}
         )
 
     @property

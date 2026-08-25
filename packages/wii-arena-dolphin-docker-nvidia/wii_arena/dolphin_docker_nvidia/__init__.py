@@ -16,6 +16,7 @@ class NvidiaDockerDolphin(DockerDolphin):
         container_socket_directory: str = "/run/wii-arena",
         extra_volumes: dict[str, dict[str, str]] | None = None,
         extra_dolphin_arguments: list[str] | None = None,
+        extra_environment: dict[str, str] | None = None,
         gpu: str = "0",
     ):
         super().__init__(
@@ -26,6 +27,7 @@ class NvidiaDockerDolphin(DockerDolphin):
             container_socket_directory=container_socket_directory,
             extra_volumes=extra_volumes,
             extra_dolphin_arguments=extra_dolphin_arguments,
+            extra_environment=extra_environment,
         )
         self._gpu = gpu
 
@@ -56,6 +58,7 @@ class NvidiaDockerDolphin(DockerDolphin):
                 "NVIDIA_DRIVER_CAPABILITIES": "all",
                 "FRAME_CAPTURE_SOCKET": self._container_frame_socket_file,
                 "CONTROL_SOCKET": self._container_control_socket_file,
+                **self._extra_environment,
             },
             command=[
                 "/opt/wii-arena/bin/entrypoint",
