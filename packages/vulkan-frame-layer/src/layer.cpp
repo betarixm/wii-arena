@@ -89,9 +89,26 @@ struct SubpassInfo {
     uint32_t depth_stencil_attachment = VK_ATTACHMENT_UNUSED;
 };
 
+struct SubpassDescriptionRecord {
+    VkSubpassDescriptionFlags flags = 0;
+    VkPipelineBindPoint bind_point = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    std::vector<VkAttachmentReference> input_attachments;
+    std::vector<VkAttachmentReference> color_attachments;
+    std::vector<VkAttachmentReference> resolve_attachments;
+    bool has_depth_stencil = false;
+    VkAttachmentReference depth_stencil{};
+    std::vector<uint32_t> preserve_attachments;
+};
+
 struct RenderPassInfo {
     std::vector<AttachmentInfo> attachments;
     std::vector<SubpassInfo> subpasses;
+    VkRenderPassCreateFlags create_flags = 0;
+    std::vector<VkAttachmentDescription> attachment_descriptions;
+    std::vector<SubpassDescriptionRecord> subpass_descriptions;
+    std::vector<VkSubpassDependency> dependencies;
+    VkRenderPass load_variant = VK_NULL_HANDLE;
+    bool is_load_variant = false;
 };
 
 struct FramebufferInfo {
@@ -106,6 +123,8 @@ struct CommandBufferRenderPassInfo {
     VkRenderPass render_pass = VK_NULL_HANDLE;
     VkFramebuffer framebuffer = VK_NULL_HANDLE;
     uint32_t subpass = 0;
+    VkRect2D render_area{};
+    VkSubpassContents contents = VK_SUBPASS_CONTENTS_INLINE;
 };
 
 struct DescriptorSetInfo {
@@ -780,11 +799,208 @@ static bool observation_color_attachment_locked(VkFramebuffer framebuffer, VkIma
     return true;
 }
 
-static void observation_on_draw(VkCommandBuffer command_buffer) {
-    if (!observation_enabled()) {
+static void apply_render_pass_layouts_locked(VkRenderPass render_pass, VkFramebuffer framebuffer,
+                                             uint32_t subpass_index, bool at_end) {
+    auto framebuffer_it = g_framebuffers.find(framebuffer);
+    auto render_pass_it = g_render_passes.find(render_pass);
+    if (framebuffer_it == g_framebuffers.end() || render_pass_it == g_render_passes.end()) {
         return;
     }
-    std::lock_guard<std::mutex> lock(g_mu);
+    const RenderPassInfo &pass = render_pass_it->second;
+    const FramebufferInfo &target = framebuffer_it->second;
+    if (subpass_index >= pass.subpasses.size()) {
+        return;
+    }
+    const SubpassInfo &subpass = pass.subpasses[subpass_index];
+    const auto move = [&](uint32_t attachment_index) {
+        if (attachment_index >= target.attachments.size() ||
+            attachment_index >= pass.attachments.size()) {
+            return;
+        }
+        auto image_it = g_images.find(target.attachments[attachment_index]);
+        if (image_it == g_images.end()) {
+            return;
+        }
+        image_it->second.layout = at_end ? pass.attachments[attachment_index].final_layout
+                                         : pass.attachments[attachment_index].initial_layout;
+    };
+    for (uint32_t attachment_index : subpass.color_attachments) {
+        move(attachment_index);
+    }
+    if (subpass.depth_stencil_attachment != VK_ATTACHMENT_UNUSED) {
+        move(subpass.depth_stencil_attachment);
+    }
+}
+
+static VkRenderPass observation_load_variant_locked(VkRenderPass render_pass) {
+    auto it = g_render_passes.find(render_pass);
+    if (it == g_render_passes.end()) {
+        return VK_NULL_HANDLE;
+    }
+    if (it->second.is_load_variant) {
+        return render_pass;
+    }
+    if (it->second.load_variant != VK_NULL_HANDLE) {
+        return it->second.load_variant;
+    }
+    if (!g_next_create_render_pass || g_device == VK_NULL_HANDLE) {
+        return VK_NULL_HANDLE;
+    }
+
+    const RenderPassInfo &original = it->second;
+    std::vector<VkAttachmentDescription> attachments = original.attachment_descriptions;
+    for (VkAttachmentDescription &attachment : attachments) {
+        attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE;
+        attachment.initialLayout = attachment.finalLayout;
+    }
+    for (const VkAttachmentDescription &attachment : attachments) {
+        if (attachment.initialLayout == VK_IMAGE_LAYOUT_UNDEFINED) {
+            return VK_NULL_HANDLE;
+        }
+    }
+
+    std::vector<VkSubpassDescription> subpasses;
+    subpasses.reserve(original.subpass_descriptions.size());
+    for (const SubpassDescriptionRecord &record : original.subpass_descriptions) {
+        VkSubpassDescription subpass{};
+        subpass.flags = record.flags;
+        subpass.pipelineBindPoint = record.bind_point;
+        subpass.inputAttachmentCount = static_cast<uint32_t>(record.input_attachments.size());
+        subpass.pInputAttachments =
+            record.input_attachments.empty() ? nullptr : record.input_attachments.data();
+        subpass.colorAttachmentCount = static_cast<uint32_t>(record.color_attachments.size());
+        subpass.pColorAttachments =
+            record.color_attachments.empty() ? nullptr : record.color_attachments.data();
+        subpass.pResolveAttachments =
+            record.resolve_attachments.empty() ? nullptr : record.resolve_attachments.data();
+        subpass.pDepthStencilAttachment =
+            record.has_depth_stencil ? &record.depth_stencil : nullptr;
+        subpass.preserveAttachmentCount = static_cast<uint32_t>(record.preserve_attachments.size());
+        subpass.pPreserveAttachments =
+            record.preserve_attachments.empty() ? nullptr : record.preserve_attachments.data();
+        subpasses.push_back(subpass);
+    }
+
+    VkRenderPassCreateInfo create_info{};
+    create_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    create_info.flags = original.create_flags;
+    create_info.attachmentCount = static_cast<uint32_t>(attachments.size());
+    create_info.pAttachments = attachments.empty() ? nullptr : attachments.data();
+    create_info.subpassCount = static_cast<uint32_t>(subpasses.size());
+    create_info.pSubpasses = subpasses.empty() ? nullptr : subpasses.data();
+    create_info.dependencyCount = static_cast<uint32_t>(original.dependencies.size());
+    create_info.pDependencies =
+        original.dependencies.empty() ? nullptr : original.dependencies.data();
+
+    VkRenderPass variant = VK_NULL_HANDLE;
+    if (g_next_create_render_pass(g_device, &create_info, nullptr, &variant) != VK_SUCCESS ||
+        variant == VK_NULL_HANDLE) {
+        return VK_NULL_HANDLE;
+    }
+
+    RenderPassInfo variant_info{};
+    variant_info.subpasses = original.subpasses;
+    variant_info.attachments.reserve(attachments.size());
+    for (const VkAttachmentDescription &attachment : attachments) {
+        variant_info.attachments.push_back(
+            AttachmentInfo{attachment.format, attachment.initialLayout, attachment.finalLayout});
+    }
+    variant_info.is_load_variant = true;
+    g_render_passes[variant] = std::move(variant_info);
+    g_render_passes[render_pass].load_variant = variant;
+    if (verbose_logging()) {
+        std::fprintf(stderr, "[frame-capture] load-op variant %p for render pass %p\n",
+                     reinterpret_cast<void *>(variant), reinterpret_cast<void *>(render_pass));
+    }
+    return variant;
+}
+
+static void observation_capture_now(VkCommandBuffer command_buffer, VkFramebuffer framebuffer,
+                                    const ObservationViewport &region, bool inside_render_pass) {
+    VkImage image = VK_NULL_HANDLE;
+    ImageInfo info{};
+    CommandBufferRenderPassInfo active{};
+    VkRenderPass variant = VK_NULL_HANDLE;
+    {
+        std::lock_guard<std::mutex> lock(g_mu);
+        if (!observation_color_attachment_locked(framebuffer, &image, &info)) {
+            return;
+        }
+        if (inside_render_pass) {
+            auto active_it = g_active_render_passes.find(command_buffer);
+            if (active_it != g_active_render_passes.end()) {
+                active = active_it->second;
+                auto pass_it = g_render_passes.find(active.render_pass);
+                const bool splittable =
+                    g_next_cmd_begin_render_pass && g_next_cmd_end_render_pass &&
+                    pass_it != g_render_passes.end() && pass_it->second.subpasses.size() == 1 &&
+                    active.subpass == 0 && active.contents == VK_SUBPASS_CONTENTS_INLINE;
+                variant = splittable ? observation_load_variant_locked(active.render_pass)
+                                     : VK_NULL_HANDLE;
+            }
+            if (variant == VK_NULL_HANDLE) {
+                g_observations[command_buffer].queued.emplace_back(framebuffer, region);
+                return;
+            }
+        }
+    }
+
+    const bool split = variant != VK_NULL_HANDLE;
+    if (split) {
+        g_next_cmd_end_render_pass(command_buffer);
+        std::lock_guard<std::mutex> lock(g_mu);
+        apply_render_pass_layouts_locked(active.render_pass, active.framebuffer, active.subpass,
+                                         true);
+        if (!observation_color_attachment_locked(framebuffer, &image, &info)) {
+            image = VK_NULL_HANDLE;
+        }
+    }
+
+    if (image != VK_NULL_HANDLE) {
+        record_observation_region(command_buffer, image, info, region);
+    }
+
+    if (!split) {
+        return;
+    }
+
+    VkMemoryBarrier resume{};
+    resume.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    resume.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                           VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                           VK_ACCESS_TRANSFER_READ_BIT;
+    resume.dstAccessMask =
+        VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    const VkPipelineStageFlags attachment_stages = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                                                   VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                                                   VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    g_next_cmd_pipeline_barrier(command_buffer, attachment_stages | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                attachment_stages, 0, 1, &resume, 0, nullptr, 0, nullptr);
+
+    VkRenderPassBeginInfo begin_info{};
+    begin_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    begin_info.renderPass = variant;
+    begin_info.framebuffer = active.framebuffer;
+    begin_info.renderArea = active.render_area;
+    begin_info.clearValueCount = 0;
+    begin_info.pClearValues = nullptr;
+    g_next_cmd_begin_render_pass(command_buffer, &begin_info, active.contents);
+    {
+        std::lock_guard<std::mutex> lock(g_mu);
+        apply_render_pass_layouts_locked(variant, active.framebuffer, 0, false);
+        active.render_pass = variant;
+        active.subpass = 0;
+        g_active_render_passes[command_buffer] = active;
+    }
+}
+
+static bool observation_close_on_draw_locked(VkCommandBuffer command_buffer,
+                                             VkFramebuffer *closed_framebuffer,
+                                             ObservationViewport *closed_region) {
     ObservationState &state = g_observations[command_buffer];
 
     PipelineDepthState depth{};
@@ -806,10 +1022,10 @@ static void observation_on_draw(VkCommandBuffer command_buffer) {
         }
     }
     if (pass_width == 0 || pass_height == 0) {
-        return;
+        return false;
     }
     if (g_screen_width == 0 || g_screen_height == 0) {
-        return;
+        return false;
     }
 
     const auto matches_tile = [&](uint32_t divisor) {
@@ -823,16 +1039,57 @@ static void observation_on_draw(VkCommandBuffer command_buffer) {
         state.viewport.x + state.viewport.width <= static_cast<int32_t>(g_screen_width) &&
         state.viewport.y + state.viewport.height <= static_cast<int32_t>(g_screen_height);
 
+    const bool leaves_tile =
+        state.drawing_3d && state.pending_framebuffer != VK_NULL_HANDLE &&
+        (framebuffer != state.pending_framebuffer || state.viewport.x != state.pending_region.x ||
+         state.viewport.y != state.pending_region.y ||
+         state.viewport.width != state.pending_region.width ||
+         state.viewport.height != state.pending_region.height);
+    if (leaves_tile) {
+        *closed_framebuffer = state.pending_framebuffer;
+        *closed_region = state.pending_region;
+        state.drawing_3d = false;
+        state.pending_framebuffer = VK_NULL_HANDLE;
+    }
+
     if (depth.test && player_sized) {
         state.drawing_3d = true;
         state.pending_region = state.viewport;
         state.pending_framebuffer = framebuffer;
-    } else if (!depth.test && !depth.write && state.drawing_3d) {
-        state.drawing_3d = false;
-        if (state.pending_framebuffer != VK_NULL_HANDLE) {
-            state.queued.emplace_back(state.pending_framebuffer, state.pending_region);
-        }
     }
+
+    return leaves_tile;
+}
+
+static void observation_on_draw(VkCommandBuffer command_buffer) {
+    if (!observation_enabled()) {
+        return;
+    }
+    VkFramebuffer closed_framebuffer = VK_NULL_HANDLE;
+    ObservationViewport closed_region{};
+    bool closed = false;
+    {
+        std::lock_guard<std::mutex> lock(g_mu);
+        closed =
+            observation_close_on_draw_locked(command_buffer, &closed_framebuffer, &closed_region);
+    }
+    if (closed) {
+        observation_capture_now(command_buffer, closed_framebuffer, closed_region, true);
+    }
+}
+
+static bool observation_close_on_end_pass_locked(VkCommandBuffer command_buffer,
+                                                 VkFramebuffer framebuffer,
+                                                 ObservationViewport *closed_region) {
+    auto state_it = g_observations.find(command_buffer);
+    if (state_it == g_observations.end() || !state_it->second.drawing_3d ||
+        state_it->second.pending_framebuffer != framebuffer) {
+        return false;
+    }
+    *closed_region = state_it->second.pending_region;
+    state_it->second.drawing_3d = false;
+    state_it->second.pending_framebuffer = VK_NULL_HANDLE;
+    return true;
 }
 
 static void observation_on_end_render_pass(VkCommandBuffer command_buffer,
@@ -840,6 +1097,18 @@ static void observation_on_end_render_pass(VkCommandBuffer command_buffer,
     if (!observation_enabled()) {
         return;
     }
+
+    ObservationViewport pending_region{};
+    bool pending_closed = false;
+    {
+        std::lock_guard<std::mutex> lock(g_mu);
+        pending_closed =
+            observation_close_on_end_pass_locked(command_buffer, framebuffer, &pending_region);
+    }
+    if (pending_closed) {
+        observation_capture_now(command_buffer, framebuffer, pending_region, false);
+    }
+
     std::vector<ObservationViewport> viewports;
     VkImage image = VK_NULL_HANDLE;
     ImageInfo info{};
@@ -1329,7 +1598,19 @@ vkCreateRenderPass(VkDevice device, const VkRenderPassCreateInfo *create_info,
             });
         }
 
+        info.create_flags = create_info->flags;
+        if (create_info->pAttachments) {
+            info.attachment_descriptions.assign(create_info->pAttachments,
+                                                create_info->pAttachments +
+                                                    create_info->attachmentCount);
+        }
+        if (create_info->pDependencies) {
+            info.dependencies.assign(create_info->pDependencies,
+                                     create_info->pDependencies + create_info->dependencyCount);
+        }
+
         info.subpasses.reserve(create_info->subpassCount);
+        info.subpass_descriptions.reserve(create_info->subpassCount);
         for (uint32_t i = 0; i < create_info->subpassCount; ++i) {
             const VkSubpassDescription &subpass = create_info->pSubpasses[i];
             SubpassInfo subpass_info{};
@@ -1344,6 +1625,35 @@ vkCreateRenderPass(VkDevice device, const VkRenderPassCreateInfo *create_info,
                 subpass_info.depth_stencil_attachment = subpass.pDepthStencilAttachment->attachment;
             }
             info.subpasses.push_back(std::move(subpass_info));
+
+            SubpassDescriptionRecord record{};
+            record.flags = subpass.flags;
+            record.bind_point = subpass.pipelineBindPoint;
+            if (subpass.pInputAttachments) {
+                record.input_attachments.assign(subpass.pInputAttachments,
+                                                subpass.pInputAttachments +
+                                                    subpass.inputAttachmentCount);
+            }
+            if (subpass.pColorAttachments) {
+                record.color_attachments.assign(subpass.pColorAttachments,
+                                                subpass.pColorAttachments +
+                                                    subpass.colorAttachmentCount);
+            }
+            if (subpass.pResolveAttachments) {
+                record.resolve_attachments.assign(subpass.pResolveAttachments,
+                                                  subpass.pResolveAttachments +
+                                                      subpass.colorAttachmentCount);
+            }
+            if (subpass.pDepthStencilAttachment) {
+                record.has_depth_stencil = true;
+                record.depth_stencil = *subpass.pDepthStencilAttachment;
+            }
+            if (subpass.pPreserveAttachments) {
+                record.preserve_attachments.assign(subpass.pPreserveAttachments,
+                                                   subpass.pPreserveAttachments +
+                                                       subpass.preserveAttachmentCount);
+            }
+            info.subpass_descriptions.push_back(std::move(record));
         }
 
         std::lock_guard<std::mutex> lock(g_mu);
@@ -1359,9 +1669,20 @@ vkCreateRenderPass(VkDevice device, const VkRenderPassCreateInfo *create_info,
 
 extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyRenderPass(VkDevice device, VkRenderPass render_pass,
                                                           const VkAllocationCallbacks *allocator) {
+    VkRenderPass variant = VK_NULL_HANDLE;
     {
         std::lock_guard<std::mutex> lock(g_mu);
-        g_render_passes.erase(render_pass);
+        auto it = g_render_passes.find(render_pass);
+        if (it != g_render_passes.end()) {
+            variant = it->second.load_variant;
+            g_render_passes.erase(it);
+            if (variant != VK_NULL_HANDLE) {
+                g_render_passes.erase(variant);
+            }
+        }
+    }
+    if (variant != VK_NULL_HANDLE) {
+        g_next_destroy_render_pass(device, variant, nullptr);
     }
     g_next_destroy_render_pass(device, render_pass, allocator);
 }
@@ -1454,8 +1775,8 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdBeginRenderPass(VkCommandBuffer comma
     }
 
     std::lock_guard<std::mutex> lock(g_mu);
-    g_active_render_passes[command_buffer] =
-        CommandBufferRenderPassInfo{begin_info->renderPass, begin_info->framebuffer, 0};
+    g_active_render_passes[command_buffer] = CommandBufferRenderPassInfo{
+        begin_info->renderPass, begin_info->framebuffer, 0, begin_info->renderArea, contents};
 
     auto framebuffer_it = g_framebuffers.find(begin_info->framebuffer);
     auto render_pass_it = g_render_passes.find(begin_info->renderPass);
@@ -1469,25 +1790,7 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdBeginRenderPass(VkCommandBuffer comma
         return;
     }
 
-    const RenderPassInfo &render_pass = render_pass_it->second;
-    const FramebufferInfo &framebuffer = framebuffer_it->second;
-    const SubpassInfo &subpass = render_pass.subpasses[0];
-    for (uint32_t attachment_index : subpass.color_attachments) {
-        if (attachment_index >= framebuffer.attachments.size()) {
-            continue;
-        }
-        auto image_it = g_images.find(framebuffer.attachments[attachment_index]);
-        if (image_it != g_images.end() && attachment_index < render_pass.attachments.size()) {
-            image_it->second.layout = render_pass.attachments[attachment_index].initial_layout;
-        }
-    }
-    const uint32_t depth_index = subpass.depth_stencil_attachment;
-    if (depth_index != VK_ATTACHMENT_UNUSED && depth_index < framebuffer.attachments.size()) {
-        auto image_it = g_images.find(framebuffer.attachments[depth_index]);
-        if (image_it != g_images.end() && depth_index < render_pass.attachments.size()) {
-            image_it->second.layout = render_pass.attachments[depth_index].initial_layout;
-        }
-    }
+    apply_render_pass_layouts_locked(begin_info->renderPass, begin_info->framebuffer, 0, false);
 }
 
 extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdEndRenderPass(VkCommandBuffer command_buffer) {
@@ -1528,33 +1831,11 @@ extern "C" VKAPI_ATTR void VKAPI_CALL vkCmdEndRenderPass(VkCommandBuffer command
             }
             return;
         }
-        const RenderPassInfo &render_pass = render_pass_it->second;
-        const FramebufferInfo &framebuffer = framebuffer_it->second;
-        if (active.subpass >= render_pass.subpasses.size()) {
+        if (active.subpass >= render_pass_it->second.subpasses.size()) {
             return;
         }
-
-        const SubpassInfo &subpass = render_pass.subpasses[active.subpass];
-        for (uint32_t attachment_index : subpass.color_attachments) {
-            if (attachment_index >= framebuffer.attachments.size()) {
-                continue;
-            }
-            auto image_it = g_images.find(framebuffer.attachments[attachment_index]);
-            if (image_it == g_images.end()) {
-                continue;
-            }
-            if (attachment_index < render_pass.attachments.size()) {
-                image_it->second.layout = render_pass.attachments[attachment_index].final_layout;
-            }
-        }
-
-        const uint32_t depth_index = subpass.depth_stencil_attachment;
-        if (depth_index != VK_ATTACHMENT_UNUSED && depth_index < framebuffer.attachments.size()) {
-            auto image_it = g_images.find(framebuffer.attachments[depth_index]);
-            if (image_it != g_images.end() && depth_index < render_pass.attachments.size()) {
-                image_it->second.layout = render_pass.attachments[depth_index].final_layout;
-            }
-        }
+        apply_render_pass_layouts_locked(active.render_pass, active.framebuffer, active.subpass,
+                                         true);
 
         auto pending_xfb_it = g_pending_xfb_captures.find(command_buffer);
         if (pending_xfb_it != g_pending_xfb_captures.end()) {
