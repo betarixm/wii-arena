@@ -21,6 +21,7 @@ from wii_arena.dolphin import (
     DolphinFrameBuffer,
     DolphinFrameBufferUnavailable,
     DolphinMemoryView,
+    DolphinSessionLost,
 )
 
 _DOLPHIN_MEMORY_FD_SCAN_SCRIPT = """\
@@ -104,7 +105,9 @@ class DockerDolphin(Dolphin, ABC):
                 4096, socket.CMSG_LEN(struct.calcsize("i"))
             )
             if not msg:
-                raise RuntimeError("Frame socket closed before sending a frame packet.")
+                raise DolphinSessionLost(
+                    "Frame socket closed before sending a frame packet."
+                )
 
             fd: int | None = None
             for cmsg_level, cmsg_type, cmsg_data in ancdata:
@@ -195,7 +198,7 @@ class DockerDolphin(Dolphin, ABC):
                 container.reload()
                 if container.status != "running":
                     logs = container.logs(tail=120).decode("utf-8", errors="replace")
-                    raise RuntimeError(
+                    raise DolphinSessionLost(
                         f"Docker container exited early (status={container.status}).\n{logs}"
                     )
 

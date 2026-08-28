@@ -67,6 +67,9 @@ class DolphinFrameBuffer(SupportsDlpack):
 class DolphinFrameBufferUnavailable(RuntimeError): ...
 
 
+class DolphinSessionLost(RuntimeError): ...
+
+
 class DolphinGameCubeControllerInput(BaseModel):
     a: bool = False
     b: bool = False
@@ -106,7 +109,7 @@ class Dolphin(SupportsSession):
             _LOGGER.debug("Executing action=%s in Dolphin session", action)
             self._control_socket.sendall(b"E" + self._pack_action(action))
             if self._control_socket.recv(1) != b"D":
-                raise RuntimeError(
+                raise DolphinSessionLost(
                     f"Unexpected response from Dolphin control socket: {self._control_socket.recv(1024)}"
                 )
 
